@@ -270,10 +270,12 @@ async function fbGetCatalogoCliente(lista){
     const out=[];
     snap.docs.sort((a,b)=>a.id.localeCompare(b.id)).forEach(d=>{
       const crudo=d.data().items;
-      let lista=[];
-      try{ lista = typeof crudo==="string" ? JSON.parse(crudo) : (crudo||[]); }
-      catch(e){ console.error("paquete ilegible:",d.id,e); lista=[]; }
-      lista.forEach((it,i)=>{
+      let paquete=[];
+      try{ paquete = typeof crudo==="string" ? JSON.parse(crudo) : (crudo||[]); }
+      catch(e){ console.error("paquete ilegible:",d.id,e); paquete=[]; }
+      if(!Array.isArray(paquete)) paquete=[];
+      paquete.forEach((it,i)=>{
+        if(!Array.isArray(it)) return;
         const [marca,medida,codigo,descripcion,precio,tlajo,meli,total]=it;
         // Las tres listas apuntan al mismo número: el cliente solo tiene la suya.
         out.push({id:`${d.id}_${i}`,marca,medida,codigo,descripcion,
