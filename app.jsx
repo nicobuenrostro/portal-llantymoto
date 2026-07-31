@@ -269,7 +269,11 @@ async function fbGetCatalogoCliente(lista){
     const snap=await getDocs(collection(db,nombre));
     const out=[];
     snap.docs.sort((a,b)=>a.id.localeCompare(b.id)).forEach(d=>{
-      (d.data().items||[]).forEach((it,i)=>{
+      const crudo=d.data().items;
+      let lista=[];
+      try{ lista = typeof crudo==="string" ? JSON.parse(crudo) : (crudo||[]); }
+      catch(e){ console.error("paquete ilegible:",d.id,e); lista=[]; }
+      lista.forEach((it,i)=>{
         const [marca,medida,codigo,descripcion,precio,tlajo,meli,total]=it;
         // Las tres listas apuntan al mismo número: el cliente solo tiene la suya.
         out.push({id:`${d.id}_${i}`,marca,medida,codigo,descripcion,
@@ -1431,8 +1435,11 @@ export default function App(){
           ]);
           const bat=writeBatch(db);
           for(let i=0,n=0;i<items.length;i+=POR_PAQUETE,n++){
+            // Firestore NO admite arreglos dentro de arreglos, así que el
+            // paquete viaja como texto JSON y se reconstruye al leerlo.
             bat.set(doc(db,nombre,`c_${String(n).padStart(3,"0")}`),
-              {parte:n,items:items.slice(i,i+POR_PAQUETE),actualizado:new Date().toISOString()});
+              {parte:n,items:JSON.stringify(items.slice(i,i+POR_PAQUETE)),
+               n:items.slice(i,i+POR_PAQUETE).length,actualizado:new Date().toISOString()});
           }
           await bat.commit();
         }
