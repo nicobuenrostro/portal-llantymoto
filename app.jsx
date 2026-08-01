@@ -1687,7 +1687,14 @@ function Portal(){
             <div style={{fontSize:14,fontWeight:600}}>El catálogo está vacío</div>
             <div style={{fontSize:12,marginTop:6}}>Sube el CSV para empezar.</div>
           </div>}
-          {!prodLoad&&products.length>0&&<div style={{overflowX:"auto",border:"1px solid "+BD,borderRadius:10,background:"#fff"}}>
+          {/* En el teléfono, tarjetas: la tabla obligaba a deslizar de lado
+              para alcanzar precios y existencia. */}
+          {!prodLoad&&products.length>0&&mob&&(
+            <div>{filtered.slice(page*PS,(page+1)*PS).map((p,i)=>
+              <CardProducto key={p.id||i} p={p} vend={true} lista="VENDEDOR" onAdd={()=>addToCart(p)}/>
+            )}</div>
+          )}
+          {!prodLoad&&products.length>0&&!mob&&<div style={{overflowX:"auto",border:"1px solid "+BD,borderRadius:10,background:"#fff"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
               <thead><tr style={{background:DK}}>
                 {["MARCA","MEDIDA","SKU","DESCRIPCIÓN"].map(h=><th key={h} style={{padding:"10px 12px",textAlign:"left",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>{h}</th>)}
