@@ -68,6 +68,17 @@ const EMPRESA = {
 // Pon el logo.png en la raíz del repo y ajusta la URL (o deja el archivo
 // en /public y usa "/logo.png").
 const ESLOGAN = "Rodamos lo que vendemos.";
+
+// 3-bis) Tapatía Credit. Aparece SOLO del lado del cliente: dentro de
+// la lista del catálogo, en el panel de cotización y en el PDF. Nunca
+// en el panel de administrador. Para apagarlo, pon activo:false — no
+// hay que tocar ninguna otra línea.
+const CREDITO = {
+  activo: true,
+  nombre: "TAPATÍA CREDIT",
+  frase:  "Compra hasta con 90 días de crédito.",
+  pie:    "Pregunta a tu asesor cómo abrir tu línea.",
+};
 const LOGO_URL = "https://raw.githubusercontent.com/nicobuenrostro/portal-llantymoto/main/logo.png";
 // Logos de las marcas: sube un PNG por marca a /marcas del repo, con el
 // nombre en minúsculas y guiones (terra-plus.png, eurogrip.png, ...).
@@ -104,7 +115,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.1 · movil · 31jul2026";
+const VERSION = "v1.2 · movil + credito · 31jul2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -407,16 +418,60 @@ function Btn({onClick,children,danger,ghost,sm,disabled}){
     {children}
   </button>;
 }
+// Proporción del ancho del PNG que ocupa el isotipo LM (el círculo).
+// Con esto el eslogan arranca justo bajo la L de LLANTYMOTO y no bajo
+// el círculo, y se estira exactamente al ancho de las letras.
+// Medido sobre el logo.png real (1418x357): el círculo termina en el
+// pixel 389 y las letras arrancan en el 416 → 416/1418 = 0.293.
+// Si algún día cambias el archivo del logo, este es el único número
+// que hay que mover: súbelo si el eslogan queda muy a la izquierda,
+// bájalo si queda muy adentro.
+const ISOTIPO = 0.293;
+
 function Logo({h=34,eslogan=true,max=250}){
-  // El eslogan va centrado bajo el logotipo: alineado a la izquierda
-  // arrancaba bajo el isotipo LM y se veía descuadrado.
-  // `max` permite achicarlo en el header del teléfono sin tocar el
-  // login ni el PDF: con 250px fijos el logotipo solo se comía media
-  // pantalla y empujaba el badge de IVA encima.
-  return <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center",minWidth:0}}>
-    <img src={LOGO_URL} alt={EMPRESA.nombre} style={{height:h,objectFit:"contain",maxWidth:max}}
+  // El ancho pintado del logotipo no se sabe hasta que carga la imagen:
+  // se mide al vuelo y de ahí sale dónde empieza y cuánto mide el
+  // eslogan. La escala es uniforme (scale, no scaleX) para no deformar
+  // la letra. offsetWidth no se ve afectado por el transform, así que
+  // la medición no se retroalimenta.
+  const [w,setW]=useState(0);
+  const [tw,setTw]=useState(0);
+  const txtRef=useRef(null);
+  useEffect(()=>{ if(txtRef.current) setTw(txtRef.current.offsetWidth); },[eslogan,h,w]);
+  const anchoLetras = w>0 ? w*(1-ISOTIPO) : 0;
+  const escala = (tw>0&&anchoLetras>0) ? Math.min(1.9,Math.max(.55,anchoLetras/tw)) : 1;
+  const alto   = Math.round(11*escala*1.15);
+  const medir  = e=>setW(e.currentTarget.getBoundingClientRect().width);
+  return <div style={{display:"inline-flex",flexDirection:"column",alignItems:"flex-start",minWidth:0}}>
+    <img src={LOGO_URL} alt={EMPRESA.nombre} onLoad={medir}
+      style={{height:h,objectFit:"contain",maxWidth:max,display:"block"}}
       onError={e=>{e.target.style.display="none";}}/>
-    {eslogan && <div style={{color:GRL,fontSize:h>=40?11:10,fontStyle:"italic",whiteSpace:"nowrap"}}>{ESLOGAN}</div>}
+    {eslogan && (w>0
+      ? <div style={{width:w,height:alto,position:"relative"}}>
+          <div ref={txtRef} style={{position:"absolute",left:w*ISOTIPO,top:1,whiteSpace:"nowrap",
+            color:GRL,fontSize:11,fontStyle:"italic",lineHeight:1.1,
+            transform:`scale(${escala})`,transformOrigin:"left top"}}>{ESLOGAN}</div>
+        </div>
+      // Si la imagen no cargó no hay contra qué alinear: se pinta plano.
+      : <div style={{color:GRL,fontSize:10,fontStyle:"italic",whiteSpace:"nowrap"}}>{ESLOGAN}</div>)}
+  </div>;
+}
+
+// ── Aviso de Tapatía Credit ───────────────────────────────────
+// Discreto a propósito: una línea, sin fondo de color ni ícono grande.
+// Debe leerse como un dato más del portal, no como publicidad que le
+// compite a las llantas.
+function LineaCredito({compacta}){
+  if(!CREDITO.activo) return null;
+  return <div style={{display:"flex",alignItems:"center",gap:10,background:"#fff",
+    border:"1px solid "+BD,borderLeft:"3px solid "+OR,borderRadius:8,
+    padding:compacta?"8px 11px":"10px 13px",marginBottom:10}}>
+    <span style={{color:OR,fontSize:9,fontWeight:800,letterSpacing:.8,whiteSpace:"nowrap"}}>{CREDITO.nombre}</span>
+    <span style={{width:1,alignSelf:"stretch",background:BD}}/>
+    <span style={{color:"#444",fontSize:compacta?11:12,fontWeight:600,lineHeight:1.3}}>
+      {CREDITO.frase}
+      {!compacta&&<span style={{display:"block",color:GRL,fontSize:10,fontWeight:400,marginTop:2}}>{CREDITO.pie}</span>}
+    </span>
   </div>;
 }
 function MarcaFiltro({m,activa,onClick,mob}){
@@ -623,6 +678,18 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   d.text("TOTAL:",bx+3,ty+9.5);
   d.text(money2(granTotal),bx+bw-2,ty+9.5,{align:"right"});
 
+  // Tapatía Credit: va en el hueco libre a la izquierda de los totales,
+  // así no le quita espacio a nada de la cotización.
+  if(CREDITO.activo && fy<250){
+    d.setFillColor(255,92,30);d.rect(M,fy-1,.8,13,"F");
+    d.setTextColor(255,92,30);d.setFont("helvetica","bold");d.setFontSize(7.5);
+    d.text(CREDITO.nombre,M+3,fy+3);
+    d.setTextColor(70,70,70);d.setFont("helvetica","normal");d.setFontSize(7.5);
+    d.text(CREDITO.frase,M+3,fy+7.5);
+    d.setTextColor(130,130,130);d.setFont("helvetica","italic");d.setFontSize(6.5);
+    d.text(CREDITO.pie,M+3,fy+11.5);
+  }
+
   if(snota){
     const ny=ty+18;
     if(ny<258){
@@ -827,6 +894,9 @@ function CartPanel({cart,setCart,session,onClose}){
               <span>TOTAL:</span><span>{money2(granTotal)}</span>
             </div>
           </div>
+          {/* Aquí es donde el cliente decide: es el momento útil para
+              recordarle que puede diferir el pago. */}
+          <LineaCredito compacta/>
           {folioMsg&&<div style={{fontSize:11,marginBottom:10,padding:"8px 12px",borderRadius:6,
             background:folioMsg.startsWith("✅")?"#f0fdf4":folioMsg.startsWith("❌")?"#fef2f2":"#fffbeb",
             color:folioMsg.startsWith("✅")?"#16a34a":folioMsg.startsWith("❌")?"#dc2626":"#d97706",
@@ -1606,7 +1676,7 @@ function Portal(){
     <header ref={hdrRef} style={{background:DK,position:"sticky",top:0,zIndex:9,boxShadow:"0 2px 10px rgba(0,0,0,.4)",paddingTop:"env(safe-area-inset-top)",overflow:"hidden"}}>
       <div style={{padding:mob?"8px 12px":"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0,flex:1}}>
-          <Logo h={mob?28:50} eslogan={!mob} max={mob?140:250}/>
+          <Logo h={mob?40:50} max={mob?200:250}/>
           {!mob&&<>
             <div style={{width:1,height:24,background:"rgba(255,255,255,.2)"}}/>
             <span style={{color:"rgba(255,255,255,.75)",fontSize:10,letterSpacing:2}}>{isAdminRole(session)?"PANEL ADMINISTRADOR":"PORTAL DE PRECIOS"}</span>
@@ -1886,9 +1956,17 @@ function Portal(){
           </div>}
 
           {!prodLoad&&filtered.length>0&&(mob?(
-            <div style={{paddingBottom:mob?96:0}}>{filtered.slice(0,(page+1)*PS).map((p,i)=>
-              <CardProducto key={p.id||i} p={p} vend={vend} lista={lista} onAdd={()=>addToCart(p)}/>
-            )}</div>
+            <div style={{paddingBottom:mob?96:0}}>{(()=>{
+              const visibles=filtered.slice(0,(page+1)*PS);
+              // El aviso viaja DENTRO de la lista, después de las primeras
+              // fichas: se encuentra haciendo scroll normal y no le quita
+              // el primer lugar a los productos.
+              const corte=Math.min(4,visibles.length-1);
+              return visibles.flatMap((p,i)=>[
+                <CardProducto key={p.id||i} p={p} vend={vend} lista={lista} onAdd={()=>addToCart(p)}/>,
+                ...(i===corte?[<LineaCredito key="credito"/>]:[])
+              ]);
+            })()}</div>
           ):(
             <div style={{overflowX:"auto",border:"1px solid "+BD,borderRadius:10,background:"#fff",boxShadow:"0 2px 8px rgba(0,0,0,.06)"}}>
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
@@ -1924,6 +2002,7 @@ function Portal(){
               </table>
             </div>
           ))}
+          {!mob&&filtered.length>0&&<div style={{marginTop:12}}><LineaCredito/></div>}
           {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </>}
 
