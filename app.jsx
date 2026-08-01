@@ -115,7 +115,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.3 · equipo/clientes · 31jul2026";
+const VERSION = "v1.4 · vendedores + clientes · 31jul2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1715,14 +1715,10 @@ function Portal(){
   // una para el equipo interno y otra para los clientes. Antes era una
   // sola lista revuelta y había que ir leyendo badge por badge para
   // saber quién era vendedor.
-  const BloqueUsuarios=({titulo,nota,lista,acento})=>(
-    <div style={{marginBottom:22}}>
-      <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"0 2px 8px",borderBottom:"2px solid "+acento,marginBottom:12,flexWrap:"wrap"}}>
-        <span style={{fontWeight:800,fontSize:12,letterSpacing:1,color:acento}}>{titulo}</span>
-        <span style={{color:GRL,fontSize:11}}>{lista.length}</span>
-        {nota&&<span style={{color:GRL,fontSize:11,marginLeft:"auto"}}>{nota}</span>}
-      </div>
-      {lista.length===0&&<div style={{color:GRL,fontSize:12,padding:"6px 2px 14px"}}>Todavía no hay nadie en este grupo.</div>}
+  const BloqueUsuarios=({lista,acento,vacio})=>(
+    <div>
+      <div style={{borderTop:"2px solid "+acento,marginBottom:12}}/>
+      {lista.length===0&&<div style={{color:GRL,fontSize:12,padding:"6px 2px 14px"}}>{vacio||"Todavía no hay nadie en este grupo."}</div>}
       {lista.length>0&&(mob?(
         <div>{lista.map(u=><div key={u.id} style={{background:isAdminRole(u)?"#eff6ff":CD,border:"1px solid "+(isAdminRole(u)?"#bfdbfe":BD),borderRadius:8,padding:14,marginBottom:8}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
@@ -1820,7 +1816,7 @@ function Portal(){
       {Hdr}{modal&&<ClientModal/>}
       {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
-      <TabBar items={[["products","CATÁLOGO"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["settings","CONFIGURACIÓN"]]}/>
+      <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["settings","CONFIGURACIÓN"]]}/>
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
 
         {tab==="products"&&<div>
@@ -1899,23 +1895,45 @@ function Portal(){
           {products.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </div>}
 
-        {tab==="clients"&&<div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,gap:8,flexWrap:"wrap"}}>
+        {/* Vendedores y clientes viven en pestañas aparte: son dos
+            trabajos distintos y se dan de alta con criterios distintos. */}
+        {tab==="vendedores"&&<div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:8,flexWrap:"wrap"}}>
             <div>
-              <span style={{color:GRL,fontSize:11}}>{equipo.length} del equipo · {clientes.length} clientes</span>
-              {userLoad&&<span style={{color:OR,fontSize:11,marginLeft:8}}>cargando...</span>}
+              <div style={{fontWeight:800,fontSize:13,color:"#9333ea"}}>VENDEDORES Y ADMINISTRADORES</div>
+              <div style={{color:GRL,fontSize:11,marginTop:2}}>
+                {equipo.length} en el equipo · ven las tres listas de precios
+                {userLoad&&<span style={{color:OR,marginLeft:8}}>cargando...</span>}
+              </div>
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button onClick={loadUsers} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
-              <Btn ghost onClick={()=>setModal({mode:"create",data:{lista:"VENDEDOR"}})}>+ VENDEDOR</Btn>
+              <Btn onClick={()=>setModal({mode:"create",data:{lista:"VENDEDOR"}})}>+ NUEVO VENDEDOR</Btn>
+            </div>
+          </div>
+          <BloqueUsuarios lista={equipo} acento="#9333ea"
+            vacio="Todavía no hay vendedores dados de alta."/>
+          <div style={{color:GRL,fontSize:11,lineHeight:1.6,marginTop:4}}>
+            Los administradores se crean desde <strong style={{color:"#1a1a1a"}}>CONFIGURACIÓN</strong> y aparecen aquí porque también ven las tres listas.
+          </div>
+        </div>}
+
+        {tab==="clients"&&<div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:8,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:13,color:OR}}>CLIENTES</div>
+              <div style={{color:GRL,fontSize:11,marginTop:2}}>
+                {clientes.length} registrados · cada uno ve solo su lista asignada
+                {userLoad&&<span style={{color:OR,marginLeft:8}}>cargando...</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={loadUsers} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
               <Btn onClick={()=>setModal({mode:"create",data:{}})}>+ NUEVO CLIENTE</Btn>
             </div>
           </div>
-
-          <BloqueUsuarios titulo="EQUIPO INTERNO" acento="#9333ea"
-            nota="Ven las tres listas de precios" lista={equipo}/>
-          <BloqueUsuarios titulo="CLIENTES" acento={OR}
-            nota="Cada uno ve solo la lista que tenga asignada" lista={clientes}/>
+          <BloqueUsuarios lista={clientes} acento={OR}
+            vacio="Todavía no hay clientes dados de alta."/>
         </div>}
 
         {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
