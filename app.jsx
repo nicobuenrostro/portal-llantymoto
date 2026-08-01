@@ -415,7 +415,10 @@ function Logo({h=34,eslogan=true}){
 }
 function MarcaFiltro({m,activa,onClick,mob}){
   const [ok,setOk]=useState(true);
-  const [bg,fg]=MARCA_COLOR[marcaKey(m)]||["#F0F0F0",GRL];
+  // MARCA_COLOR guarda OBJETOS {bg,c}, no listas. Desarmarlo como lista
+  // ("const [bg,fg]=...") tumbaba el portal en cuanto había una marca
+  // que dibujar: "object is not iterable".
+  const { bg, c: fg } = marcaStyle(m);
   const todas = m==="", otras = m===OTRAS;
   const fondo = MARCA_FONDO[marcaKey(m)] || "#fff";
   // Los logotipos van SIEMPRE a color: así se reconoce la marca de un
