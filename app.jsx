@@ -93,7 +93,7 @@ const MARCA_FONDO = { PLUSWAY:"#262626" };
 // apareciendo normal en el catálogo, en las búsquedas y en TODAS; solo
 // se agrupan bajo un chip "OTRAS" para no llenar la fila.
 // Para volver a mostrar una marca, quítala de esta lista.
-const MARCAS_OCULTAS = ["EUROGRIP","VIPAL","RAGE"];
+const MARCAS_OCULTAS = ["EUROGRIP","VIPAL","RAGE","URIDE"];
 const OTRAS = "__OTRAS__";
 const esOculta = m => MARCAS_OCULTAS.includes(marcaKey(m));
 
@@ -115,7 +115,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.6 · permiso subir CSV · 31jul2026";
+const VERSION = "v2.1 · fix descuento pdf · 01ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -159,7 +159,23 @@ const calcTotal = p => {
 const semaforo = t => t===0?ROJO : t<=5?NARANJA : t<=20?AMBAR : VERDE;
 // El cliente no ve el inventario exacto arriba de 30 piezas.
 const TOPE_STOCK = 30;
-const stockVis = t => t>=TOPE_STOCK ? "+30" : String(t);
+// `real` SOLO puede ser true para vendedores y administradores. Aun
+// así es cinturón y tirantes: los catálogos que lee un cliente
+// (cat_asociado, cat_distribuidor, cat_publico) se guardan YA topados
+// en 30 al subir el CSV, así que aunque un cliente lograra encender
+// este parámetro, el número real no existe en los datos que recibe.
+const stockVis = (t,real=false) => (!real && t>=TOPE_STOCK) ? "+30" : String(t);
+// Píldora de existencia por almacén. Antes TLAJO y CHAPALA salían en
+// el mismo gris plano y no se distinguía nada de un vistazo; ahora
+// cada celda dice sola si hay, hay poco o no hay.
+function StockPill({v,peso=600,real=false}){
+  const n=safeNum(v);
+  if(n<=0) return <span style={{color:"#D5D5D5",fontSize:12}}>—</span>;
+  const col=semaforo(n);
+  return <span style={{display:"inline-block",minWidth:38,textAlign:"center",
+    padding:"3px 8px",borderRadius:12,fontSize:12,fontWeight:peso,
+    color:col,background:col+"14",border:"1px solid "+col+"33"}}>{stockVis(n,real)}</span>;
+}
 // Se aplica AL GUARDAR, no al pintar: lo que pasa de 30 se guarda como 30.
 const topar = v => { const n=safeNum(v); return n>=TOPE_STOCK ? TOPE_STOCK : n; };
 const almPpal  = p => { const i=ALMS.findIndex(a=>safeNum(p[a])>0); return i>=0?ALMS_L[i]:"—"; };
@@ -465,8 +481,10 @@ function Logo({h=34,eslogan=true,max=250}){
 // Discreto a propósito: una línea, sin fondo de color ni ícono grande.
 // Debe leerse como un dato más del portal, no como publicidad que le
 // compite a las llantas.
-function LineaCredito({compacta}){
-  if(!CREDITO.activo) return null;
+function LineaCredito({compacta,esCliente=true}){
+  // Es una herramienta de financiamiento PARA el cliente: al vendedor
+  // solo le quita espacio de trabajo, así que jamás se le muestra.
+  if(!CREDITO.activo||!esCliente) return null;
   return <div style={{display:"flex",alignItems:"center",gap:10,background:"#fff",
     border:"1px solid "+BD,borderLeft:"3px solid "+OR,borderRadius:8,
     padding:compacta?"8px 11px":"10px 13px",marginBottom:10}}>
@@ -567,6 +585,33 @@ function Pager({total,pg,setPg,ps=50,mob}){
 }
 
 // ── PDF de cotización ─────────────────────────────────────────
+// Tokens del documento. Solo del PDF: el portal tiene los suyos.
+const PDF = {
+  ink:    [26,26,26],     // negro corporativo
+  naranja:[255,92,30],    // naranja LlantyMoto
+  texto:  [55,55,55],
+  sutil:  [130,130,130],
+  borde:  [223,223,223],
+  fondo:  [247,247,247],
+  rojo:   [190,40,40],
+  M:14, W:210, H:297,
+  limite:     270,  // el contenido NUNCA baja de aquí; el pie vive abajo
+  headerAlto:  36,  // página 1
+  headerCont:  15,  // páginas 2+
+};
+
+// El logo se baja una vez y se mide para conocer su proporción real.
+// Si falla la red, se devuelve null y el PDF usa el nombre en texto.
+async function cargarLogoPDF(){
+  try{
+    const resp=await fetch(LOGO_URL); const blob=await resp.blob();
+    const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(blob);});
+    const img=new Image();
+    await new Promise(r=>{img.onload=r;img.onerror=r;img.src=b64;});
+    return {b64, ratio:(img.naturalWidth||397)/(img.naturalHeight||100)};
+  }catch(e){ return null; }
+}
+
 async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNombre}){
   const sfolio   = safe(folio)||"S/F";
   const snota    = safe(nota);
@@ -577,83 +622,141 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   const sitems   = Array.isArray(items)?items:[];
   const fecha    = new Date().toLocaleDateString("es-MX",{day:"2-digit",month:"long",year:"numeric"});
 
+  const logo = await cargarLogoPDF();
   const d=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
-  const W=210,M=15;
+  const {M,W}=PDF, AW=W-M*2;
 
-  // Encabezado negro con franja naranja
-  d.setFillColor(26,26,26); d.rect(0,0,W,42,"F");
-  d.setFillColor(255,92,30); d.rect(0,42,W,2.5,"F");
+  const F=(c)=>d.setFillColor(c[0],c[1],c[2]);
+  const T=(c)=>d.setTextColor(c[0],c[1],c[2]);
+  const D=(c)=>d.setDrawColor(c[0],c[1],c[2]);
 
-  try{
-    const resp=await fetch(LOGO_URL);
-    const blob=await resp.blob();
-    const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(blob);});
-    const img=new Image();
-    await new Promise(r=>{img.onload=r;img.onerror=r;img.src=b64;});
-    const ratio=(img.naturalWidth||3)/(img.naturalHeight||1);
-    const imgH=18, imgW=imgH*ratio;
-    d.addImage(b64,"PNG",M,6,imgW,imgH);
-  }catch(e){
-    d.setTextColor(255,255,255);d.setFontSize(17);d.setFont("helvetica","bold");
-    d.text(EMPRESA.nombre.toUpperCase(),M,17);
-  }
-
-  d.setTextColor(255,92,30);d.setFontSize(8);d.setFont("helvetica","bolditalic");
-  d.text(ESLOGAN,M,26);
-  d.setTextColor(200,200,200);d.setFontSize(7.5);d.setFont("helvetica","normal");
-  d.text(EMPRESA.giro,M,30.5);
-  d.text(`${EMPRESA.ciudad}  |  ${EMPRESA.correo}  |  ${EMPRESA.web}`,M,33.5);
-
-  d.setFillColor(255,92,30);d.rect(140,0,70,42,"F");
-  d.setTextColor(255,255,255);d.setFontSize(15);d.setFont("helvetica","bold");
-  d.text("COTIZACIÓN",175,14,{align:"center"});
-  d.setFontSize(11);d.text(sfolio,175,22,{align:"center"});
-  d.setFontSize(9);d.setFont("helvetica","normal");d.text(fecha,175,29,{align:"center"});
-
-  let y=53;
-  d.setFillColor(246,246,246);d.rect(M,y-4,W-M*2,26,"F");
-  d.setDrawColor(230,230,230);d.setLineWidth(.3);d.rect(M,y-4,W-M*2,26);
-  d.setTextColor(255,92,30);d.setFont("helvetica","bold");d.setFontSize(9);
-  d.text("DATOS DE COTIZACIÓN",M+2,y+1);y+=6;
-
-  const tf=(lbl,val,x1,x2)=>{
-    d.setFont("helvetica","normal");d.setTextColor(90,90,90);d.setFontSize(8.5);d.text(lbl,x1,y);
-    d.setFont("helvetica","bold");d.setTextColor(30,30,30);d.text(safe(val)||"—",x2,y);
+  // ── Cromo de página ────────────────────────────────────────
+  const pintarLogo=(x,y,h)=>{
+    if(!logo){
+      T([255,255,255]);d.setFontSize(h*3.2);d.setFont("helvetica","bold");
+      d.text(EMPRESA.nombre.toUpperCase(),x,y+h*0.8); return {w:h*4};
+    }
+    const w=h*logo.ratio; d.addImage(logo.b64,"PNG",x,y,w,h); return {w};
   };
-  tf("Folio:",sfolio,M+2,M+18);tf("Fecha:",fecha,100,116);y+=6;
-  tf("Elaboró:",snombre,M+2,M+20);tf("Vigencia:",svig,100,116);y+=6;
-  d.setFont("helvetica","normal");d.setTextColor(90,90,90);d.setFontSize(8.5);d.text("Cliente:",M+2,y);
-  d.setFont("helvetica","bold");d.setTextColor(30,30,30);
-  d.text(d.splitTextToSize(scliente,100)[0]||scliente,M+20,y);
 
+  const headerPrimera=()=>{
+    F(PDF.ink);   d.rect(0,0,W,PDF.headerAlto,"F");
+    F(PDF.naranja);d.rect(0,PDF.headerAlto,W,1.4,"F");
+    const {w:logoW}=pintarLogo(M,6.5,15);
+    // El eslogan arranca bajo la L de LLANTYMOTO (no bajo el círculo LM)
+    // y se ajusta al ancho de las letras. Misma regla que en el portal.
+    const eslX = M + logoW*ISOTIPO, eslW = logoW*(1-ISOTIPO);
+    d.setFont("helvetica","bolditalic");d.setFontSize(8);
+    const fs=Math.min(9,Math.max(6,8*eslW/Math.max(1,d.getTextWidth(ESLOGAN))));
+    d.setFontSize(fs);T(PDF.naranja);
+    d.text(ESLOGAN,eslX,25.4);
+    d.setFont("helvetica","normal");d.setFontSize(7);T([185,185,185]);
+    d.text(EMPRESA.giro,M,30);
+    d.text(`${EMPRESA.ciudad}   ·   ${EMPRESA.correo}   ·   ${EMPRESA.web}`,M,33.4);
+    // Tarjeta naranja: COTIZACIÓN + folio + fecha
+    const cw=56, cx=W-M-cw;
+    F(PDF.naranja);d.roundedRect(cx,5.5,cw,25,2,2,"F");
+    T([255,255,255]);d.setFont("helvetica","bold");d.setFontSize(11);
+    d.text("COTIZACIÓN",cx+cw/2,12.5,{align:"center"});
+    d.setFontSize(13);d.text(sfolio,cx+cw/2,20,{align:"center"});
+    d.setFont("helvetica","normal");d.setFontSize(8);d.setTextColor(255,224,200);
+    d.text(fecha,cx+cw/2,26,{align:"center"});
+  };
+
+  const headerCont=()=>{
+    F(PDF.ink);d.rect(0,0,W,PDF.headerCont,"F");
+    F(PDF.naranja);d.rect(0,PDF.headerCont,W,1,"F");
+    pintarLogo(M,3.6,8);
+    T([255,255,255]);d.setFont("helvetica","bold");d.setFontSize(9);
+    d.text(`COTIZACIÓN ${sfolio}`,W-M,7.5,{align:"right"});
+    d.setFont("helvetica","normal");d.setFontSize(7);T([190,190,190]);
+    d.text(`${scliente}  ·  Continuación`,W-M,11.8,{align:"right"});
+  };
+
+  const footerStatic=()=>{
+    D(PDF.naranja);d.setLineWidth(.6);d.line(M,281,W-M,281);
+    T(PDF.sutil);d.setFont("helvetica","bold");d.setFontSize(7);
+    d.text(`${EMPRESA.nombre}  ·  ${EMPRESA.web}`,M,285.5);
+    d.setFont("helvetica","normal");
+    d.text(`${sfolio}  ·  ${fecha}`,W/2,285.5,{align:"center"});
+    // "Página X de Y" se agrega al final, cuando ya se conoce Y.
+  };
+
+  // ── Cursor + salto de página seguro ────────────────────────
+  // need(h): si el bloque de altura h no cabe antes del límite, se
+  // abre página nueva CON su cromo. Así ningún bloque se parte ni
+  // pisa el pie, y jamás se generan páginas vacías (solo se abre
+  // página cuando hay contenido esperando).
+  headerPrimera(); footerStatic();
+  let y=PDF.headerAlto+8;
+  const need=h=>{
+    if(y+h>PDF.limite){ d.addPage(); headerCont(); footerStatic(); y=PDF.headerCont+8; }
+  };
+
+  // ── Datos de cotización ────────────────────────────────────
+  const cardH=23;
+  F(PDF.fondo);d.roundedRect(M,y,AW,cardH,1.5,1.5,"F");
+  D(PDF.borde);d.setLineWidth(.25);d.roundedRect(M,y,AW,cardH,1.5,1.5);
+  T(PDF.naranja);d.setFont("helvetica","bold");d.setFontSize(8);
+  d.text("DATOS DE COTIZACIÓN",M+3,y+5);
+  const col2=M+AW/2;
+  const tf=(lbl,val,x,yy,maxW)=>{
+    d.setFont("helvetica","normal");T([120,120,120]);d.setFontSize(7.6);d.text(lbl,x,yy);
+    d.setFont("helvetica","bold");T([25,25,25]);
+    const v=safe(val)||"—";
+    d.text(maxW?(d.splitTextToSize(v,maxW)[0]||v):v,x+d.getTextWidth(lbl)+2.5,yy);
+  };
+  tf("Folio:",sfolio,M+3,y+10.5); tf("Fecha:",fecha,col2,y+10.5);
+  tf("Elaboró:",snombre,M+3,y+15.5,AW/2-24); tf("Vigencia:",svig,col2,y+15.5);
+  tf("Cliente:",scliente,M+3,y+20.5,AW-30);
+  y+=cardH+4;
+
+  // ── Aviso de IVA ───────────────────────────────────────────
+  F(PDF.naranja);d.rect(M,y,1,6,"F");
+  F([255,246,241]);d.rect(M+1,y,AW-1,6,"F");
+  T([150,70,30]);d.setFont("helvetica","normal");d.setFontSize(7.4);
+  d.text("Todos los productos causan IVA. Los precios de esta cotización ya incluyen el IVA del 16%.",M+4,y+4);
   y+=10;
-  d.setFont("helvetica","bold");d.setFontSize(8);d.setTextColor(37,99,235);
-  d.text("Todos los productos causan IVA. Los precios de esta cotización ya incluyen el IVA del 16%.",M,y);
-  y+=4;
 
+  // ── Tabla de productos ─────────────────────────────────────
+  // Anchos definidos UNA vez, en % del área útil, sumando 100 exacto:
+  // el encabezado negro y el cuerpo miden lo mismo y la columna
+  // IMPORTE termina en el borde derecho.
+  const PCT=[4,13,13,38,8,12,12];
+  const colW=PCT.map(p=>AW*p/100);
   const rows=sitems.map((it,i)=>[
-    i+1,
-    safe(it.marca)||"—",
-    safe(it.medida)||"—",
-    safe(it.descripcion)||"—",
-    safeNum(it.cantidad),
-    money2(it.precio),
-    money2(safeNum(it.precio)*safeNum(it.cantidad)),
+    i+1, safe(it.marca)||"—", safe(it.medida)||"—", safe(it.descripcion)||"—",
+    safeNum(it.cantidad), money2(it.precio), money2(safeNum(it.precio)*safeNum(it.cantidad)),
   ]);
 
   d.autoTable({
     startY:y,
-    head:[["#","MARCA","MEDIDA","DESCRIPCIÓN","CANT.","P. UNIT.","IMPORTE"]],
+    head:[["#","MARCA","MEDIDA","DESCRIPCIÓN","CANT.","P. UNITARIO","IMPORTE"]],
     body:rows,
-    margin:{left:M,right:M},
-    headStyles:{fillColor:[26,26,26],textColor:255,fontStyle:"bold",fontSize:7.5,halign:"center"},
-    bodyStyles:{fontSize:7,textColor:[40,40,40]},
-    columnStyles:{0:{halign:"center",cellWidth:7},1:{cellWidth:22},2:{cellWidth:22,fontStyle:"bold"},3:{cellWidth:62},4:{halign:"center",cellWidth:12},5:{halign:"right",cellWidth:23},6:{halign:"right",cellWidth:24}},
+    margin:{left:M,right:M,top:PDF.headerCont+6,bottom:PDF.H-PDF.limite},
+    tableWidth:AW,
+    styles:{font:"helvetica",fontSize:7.6,cellPadding:{top:2.1,bottom:2.1,left:1.8,right:1.8},
+            lineColor:PDF.borde,lineWidth:.15,overflow:"linebreak",textColor:[45,45,45]},
+    headStyles:{fillColor:PDF.ink,textColor:255,fontStyle:"bold",fontSize:7.2,lineWidth:0},
     alternateRowStyles:{fillColor:[250,250,250]},
-    tableLineColor:[225,225,225],tableLineWidth:.1,
+    columnStyles:{
+      0:{cellWidth:colW[0],halign:"center"},
+      1:{cellWidth:colW[1],halign:"left"},
+      2:{cellWidth:colW[2],halign:"left",fontStyle:"bold"},
+      3:{cellWidth:colW[3],halign:"left"},
+      4:{cellWidth:colW[4],halign:"center"},
+      5:{cellWidth:colW[5],halign:"right"},
+      6:{cellWidth:colW[6],halign:"right"},
+    },
+    rowPageBreak:"avoid",     // ninguna fila se parte entre páginas
+    showHead:"everyPage",     // el encabezado de columnas se repite
+    didDrawPage:data=>{
+      if(data.pageNumber>1){ headerCont(); footerStatic(); }
+    },
   });
+  y=d.lastAutoTable.finalY+6;
 
-  // Totales. Los precios de lista ya incluyen IVA → se desglosa hacia atrás.
+  // ── Totales + Tapatía Credit, lado a lado ──────────────────
   const bruto  = sitems.reduce((s,it)=>s+safeNum(it.precio)*safeNum(it.cantidad),0);
   const descMonto = sdesc>0?bruto*(sdesc/100):0;
   const total  = bruto-descMonto;
@@ -661,74 +764,95 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   const iva    = PRECIOS_CON_IVA ? total-base : total*TASA_IVA;
   const granTotal = PRECIOS_CON_IVA ? total : total+iva;
 
-  const fy=d.lastAutoTable.finalY+5;
-  const bx=118,bw=77;let ty=fy;
-  const nRows=sdesc>0?4:3;
-  d.setFillColor(249,249,249);d.rect(bx,ty-2,bw,nRows*6.5+4,"F");
-  d.setDrawColor(225,225,225);d.setLineWidth(.2);d.rect(bx,ty-2,bw,nRows*6.5+4);
+  const nRows=(sdesc>0?4:3);
+  const totH=nRows*6+11+4;                 // filas + banda TOTAL + aire
+  need(totH);
+  const bw=AW*0.40, bx=W-M-bw;
 
-  const trow=(lbl,val,color)=>{
-    d.setFont("helvetica","normal");d.setFontSize(8.5);d.setTextColor(...(color||[90,90,90]));d.text(lbl,bx+2,ty+4);
-    d.setFont("helvetica","bold");d.setTextColor(...(color||[30,30,30]));d.text(val,bx+bw-2,ty+4,{align:"right"});
-    ty+=6.5;
+  // Tarjeta de crédito (solo si está activa). Es independiente del
+  // resumen: quitarla no cambia el ancho ni la posición de los totales.
+  if(CREDITO.activo){
+    const cw2=AW-bw-8, ch=19;
+    D(PDF.borde);d.setLineWidth(.25);d.roundedRect(M,y,cw2,ch,1.5,1.5);
+    F(PDF.naranja);d.rect(M,y+1.5,1,ch-3,"F");
+    T(PDF.naranja);d.setFont("helvetica","bold");d.setFontSize(7.6);
+    d.text(CREDITO.nombre,M+4,y+5.5);
+    T(PDF.texto);d.setFont("helvetica","bold");d.setFontSize(8.4);
+    d.text("Hasta 90 días de crédito.",M+4,y+10.5);
+    d.setFont("helvetica","normal");d.setFontSize(6.8);T(PDF.sutil);
+    d.text("Consulta requisitos con tu asesor.  ·  Sujeto a autorización.",M+4,y+15);
+  }
+
+  let ty=y;
+  F([250,250,250]);d.rect(bx,ty,bw,nRows*6+2,"F");
+  D(PDF.borde);d.setLineWidth(.25);d.rect(bx,ty,bw,nRows*6+2);
+  const trow=(lbl,val,color,bold)=>{
+    d.setFont("helvetica","normal");d.setFontSize(8);T(color||[110,110,110]);d.text(lbl,bx+3,ty+4.6);
+    d.setFont("helvetica",bold?"bold":"normal");T(color||[30,30,30]);
+    // Si etiqueta + monto no caben en el ancho de la tarjeta (montos de
+    // muchos dígitos), el monto se encoge hasta caber en vez de salirse.
+    let fs=8;d.setFontSize(fs);
+    const lw=d.getTextWidth(lbl);
+    while(fs>5.5 && lw+d.getTextWidth(val)+8 > bw){fs-=.5;d.setFontSize(fs);}
+    d.text(val,bx+bw-3,ty+4.6,{align:"right"});
+    ty+=6;
   };
-  trow("Importe lista (c/IVA):",money2(bruto));
-  if(sdesc>0) trow(`Descuento (${sdesc}%):`,"-"+money2(descMonto),[200,30,30]);
-  trow("Subtotal sin IVA:",money2(base));
-  trow("IVA (16%):",money2(iva),[37,99,235]);
+  trow("Importe de lista (c/IVA)",money2(bruto));
+  if(sdesc>0) trow(`Descuento (${sdesc}%)`,"-"+money2(descMonto),PDF.rojo,true);
+  trow("Subtotal sin IVA",money2(base));
+  trow("IVA (16%)",money2(iva));
+  ty+=2;
+  F(PDF.naranja);d.roundedRect(bx,ty,bw,10,1.5,1.5,"F");
+  T([255,255,255]);d.setFont("helvetica","bold");d.setFontSize(9);
+  d.text("TOTAL",bx+3,ty+6.6);
+  d.setFontSize(11.5);
+  d.text(money2(granTotal),bx+bw-3,ty+6.8,{align:"right"});
+  y=ty+14;
 
-  d.setFillColor(255,92,30);d.rect(bx,ty+3,bw,9,"F");
-  d.setTextColor(255,255,255);d.setFont("helvetica","bold");d.setFontSize(11);
-  d.text("TOTAL:",bx+3,ty+9.5);
-  d.text(money2(granTotal),bx+bw-2,ty+9.5,{align:"right"});
-
-  // Tapatía Credit: va en el hueco libre a la izquierda de los totales,
-  // así no le quita espacio a nada de la cotización.
-  if(CREDITO.activo && fy<250){
-    d.setFillColor(255,92,30);d.rect(M,fy-1,.8,13,"F");
-    d.setTextColor(255,92,30);d.setFont("helvetica","bold");d.setFontSize(7.5);
-    d.text(CREDITO.nombre,M+3,fy+3);
-    d.setTextColor(70,70,70);d.setFont("helvetica","normal");d.setFontSize(7.5);
-    d.text(CREDITO.frase,M+3,fy+7.5);
-    d.setTextColor(130,130,130);d.setFont("helvetica","italic");d.setFontSize(6.5);
-    d.text(CREDITO.pie,M+3,fy+11.5);
-  }
-
+  // ── Observaciones ──────────────────────────────────────────
   if(snota){
-    const ny=ty+18;
-    if(ny<258){
-      d.setTextColor(60,60,60);d.setFont("helvetica","bold");d.setFontSize(8);
-      d.text("OBSERVACIONES:",M,ny);
-      d.setFont("helvetica","normal");d.setFontSize(7.5);
-      d.text(d.splitTextToSize(snota,W-M*2-5),M,ny+5);
-    }
+    const lineas=d.splitTextToSize(snota,AW-6);
+    const oh=6+lineas.length*3.8;
+    need(oh);
+    T([60,60,60]);d.setFont("helvetica","bold");d.setFontSize(7.6);
+    d.text("OBSERVACIONES",M,y+3);
+    d.setFont("helvetica","normal");d.setFontSize(7.4);T(PDF.texto);
+    d.text(lineas,M,y+7.5);
+    y+=oh+3;
   }
 
-  const by=ty+20+(snota?12:0);
-  if(by<256){
-    d.setFillColor(246,246,246);d.rect(M,by,W-M*2,25,"F");
-    d.setDrawColor(225,225,225);d.rect(M,by,W-M*2,25);
-    d.setTextColor(255,92,30);d.setFont("helvetica","bold");d.setFontSize(8);
-    d.text("DATOS PARA DEPÓSITO / TRANSFERENCIA",M+2,by+5);
-    const bf=(l,v,x1,x2,yy)=>{
-      d.setFont("helvetica","normal");d.setFontSize(7.5);d.setTextColor(90,90,90);d.text(l,x1,yy);
-      d.setFont("helvetica","bold");d.setTextColor(30,30,30);d.text(v,x2,yy);
-    };
-    bf("Banco:",EMPRESA.banco,M+2,M+16,by+11);
-    bf("Titular:",EMPRESA.titular,100,114,by+11);
-    bf("No. Cuenta:",EMPRESA.cuenta,M+2,M+26,by+17);
-    bf("CLABE:",EMPRESA.clabe,100,114,by+17);
-    d.setFont("helvetica","italic");d.setFontSize(6.5);d.setTextColor(120,120,120);
-    d.text(EMPRESA.notaBanco,M+2,by+22);
-  }
+  // ── Datos bancarios (nunca se omiten ni se parten) ─────────
+  const bh=29; need(bh+4);
+  F(PDF.fondo);d.roundedRect(M,y,AW,bh,1.5,1.5,"F");
+  D(PDF.borde);d.setLineWidth(.25);d.roundedRect(M,y,AW,bh,1.5,1.5);
+  T(PDF.naranja);d.setFont("helvetica","bold");d.setFontSize(8);
+  d.text("DATOS PARA DEPÓSITO O TRANSFERENCIA",M+3,y+5.5);
+  const bf=(l,v,x,yy,big)=>{
+    d.setFont("helvetica","normal");d.setFontSize(7.4);T([120,120,120]);d.text(l,x,yy);
+    d.setFont("helvetica","bold");d.setFontSize(big?9:7.8);T([25,25,25]);
+    d.text(v,x+d.getTextWidth(l)+2.5,yy);
+  };
+  bf("Banco:",EMPRESA.banco,M+3,y+11.5);
+  bf("Titular:",EMPRESA.titular,M+52,y+11.5);
+  bf("No. de cuenta:",EMPRESA.cuenta,M+3,y+18.5,true);
+  bf("CLABE:",EMPRESA.clabe,M+82,y+18.5,true);
+  d.setFont("helvetica","italic");d.setFontSize(6.6);T(PDF.sutil);
+  d.text(EMPRESA.notaBanco+"  Verifica que el beneficiario sea COMERCIAL LLANTERA TAPATÍA SA DE CV antes de pagar.",M+3,y+25);
+  y+=bh+5;
 
-  d.setFillColor(26,26,26);d.rect(0,282,W,15,"F");
-  d.setFillColor(255,92,30);d.rect(0,282,W,1.5,"F");
-  d.setTextColor(255,255,255);d.setFont("helvetica","bold");d.setFontSize(7.5);
-  d.text("Precios sujetos a cambio sin previo aviso. Sujeto a disponibilidad.",W/2,287.5,{align:"center"});
-  d.setFont("helvetica","normal");d.setTextColor(190,190,190);
-  d.text("Esta cotización es informativa y no constituye un pedido, factura ni compromiso de entrega.",W/2,291,{align:"center"});
-  d.text(`${EMPRESA.nombre}  |  ${EMPRESA.web}  |  ${fecha}`,W/2,294.5,{align:"center"});
+  // ── Condiciones comerciales ────────────────────────────────
+  need(10);
+  T(PDF.sutil);d.setFont("helvetica","normal");d.setFontSize(6.8);
+  d.text("Precios sujetos a cambio sin previo aviso  ·  Sujeto a disponibilidad de inventario.",M,y+2.5);
+  d.text("Esta cotización es informativa y no constituye pedido, factura ni compromiso de entrega.",M,y+6.3);
+
+  // ── Página X de Y (segunda pasada, ya con el total conocido) ─
+  const pages=d.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    d.setPage(i);
+    T(PDF.sutil);d.setFont("helvetica","normal");d.setFontSize(7);
+    d.text(`Página ${i} de ${pages}`,W-M,285.5,{align:"right"});
+  }
 
   d.save(`Cotizacion_${sfolio}.pdf`);
 }
@@ -900,7 +1024,7 @@ function CartPanel({cart,setCart,session,onClose}){
           </div>
           {/* Aquí es donde el cliente decide: es el momento útil para
               recordarle que puede diferir el pago. */}
-          <LineaCredito compacta/>
+          <LineaCredito compacta esCliente={!esInterno(session)}/>
           {folioMsg&&<div style={{fontSize:11,marginBottom:10,padding:"8px 12px",borderRadius:6,
             background:folioMsg.startsWith("✅")?"#f0fdf4":folioMsg.startsWith("❌")?"#fef2f2":"#fffbeb",
             color:folioMsg.startsWith("✅")?"#16a34a":folioMsg.startsWith("❌")?"#dc2626":"#d97706",
@@ -1286,7 +1410,7 @@ function CardProducto({p,vend,lista,onAdd}){
         <MarcaChip marca={p.marca} size={12}/>
         <span style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:800,color:col}}>
           <span style={{width:10,height:10,borderRadius:"50%",background:col,flexShrink:0}}/>
-          {stockVis(tot)} pzs
+          {stockVis(tot,vend)} pzs
         </span>
       </div>
       {/* #BBB sobre blanco daba 1.9:1 de contraste: ilegible bajo el sol. */}
@@ -1317,11 +1441,11 @@ function CardProducto({p,vend,lista,onAdd}){
 
       <div style={{borderTop:"1px solid "+BD,background:"#FAFAFA",display:"flex",alignItems:"center",gap:12,padding:"8px 14px",flexWrap:"wrap"}}>
         <span style={{fontSize:9,fontWeight:700,color:GRL,letterSpacing:.6}}>EXISTENCIA</span>
-        {ALMS.map((a,i)=>{const v=safeNum(p[a]);return(
-          <span key={a} style={{fontSize:12,color:GRL}}>
-            {ALMS_L[i]} <strong style={{color:v>0?DK:"#B0B0B0",fontWeight:800,fontSize:13}}>{v>0?stockVis(v):"—"}</strong>
+        {ALMS.map((a,i)=>(
+          <span key={a} style={{fontSize:11,color:GRL,display:"inline-flex",alignItems:"center",gap:5}}>
+            {ALMS_L[i]} <StockPill v={p[a]} real={vend}/>
           </span>
-        );})}
+        ))}
       </div>
       <button onClick={tot>0?onAdd:undefined} disabled={tot===0}
         style={{width:"100%",padding:14,background:tot>0?OR:"#C9C9C9",color:"#fff",border:"none",cursor:tot>0?"pointer":"not-allowed",fontWeight:800,fontSize:13,letterSpacing:1}}>
@@ -2072,7 +2196,7 @@ function Portal(){
               const corte=Math.min(4,visibles.length-1);
               return visibles.flatMap((p,i)=>[
                 <CardProducto key={p.id||i} p={p} vend={vend} lista={lista} onAdd={()=>addToCart(p)}/>,
-                ...(i===corte?[<LineaCredito key="credito"/>]:[])
+                ...(i===corte?[<LineaCredito key="credito" esCliente={!vend}/>]:[])
               ]);
             })()}</div>
           ):(
@@ -2083,8 +2207,11 @@ function Portal(){
                   {vend
                     ? ["PÚBLICO","DIST.","ASOCIADO"].map(h=><th key={h} style={{padding:"10px 8px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>{h}<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.55)"}}>IVA incl.</div></th>)
                     : <th style={{padding:"10px 10px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>PRECIO<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.55)"}}>IVA incl.</div></th>}
-                  {ALMS_L.map(a=><th key={a} style={{padding:"10px 8px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8}}>{a}</th>)}
-                  <th style={{padding:"10px 8px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8}}>TOTAL</th>
+                  {/* Los almacenes van en su propia zona sombreada, con
+                      borde a la izquierda: precios y existencia dejan de
+                      leerse como una sola sopa de números. */}
+                  {ALMS_L.map((a,i)=><th key={a} style={{padding:"10px 8px",textAlign:"center",color:"rgba(255,255,255,.85)",fontWeight:700,fontSize:10,letterSpacing:.8,background:"rgba(255,255,255,.07)",borderLeft:i===0?"2px solid rgba(255,255,255,.25)":"none"}}>{a}</th>)}
+                  <th style={{padding:"10px 8px",textAlign:"center",color:"#fff",fontWeight:800,fontSize:10,letterSpacing:.8,background:"rgba(255,255,255,.07)"}}>TOTAL</th>
                   <th style={{width:36}}></th>
                 </tr></thead>
                 <tbody>{filtered.slice(page*PS,(page+1)*PS).map((p,i)=>{
@@ -2099,8 +2226,8 @@ function Portal(){
                       <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.distribuidor)}</td>
                       <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td>
                     </>:<td style={{padding:"8px 10px",textAlign:"right",fontWeight:800,fontSize:14,color:OR,whiteSpace:"nowrap"}}>{money(getPrecio(p,lista))}</td>}
-                    {ALMS.map(a=>{const v=safeNum(p[a]);return <td key={a} style={{padding:"8px",textAlign:"right",color:v>0?"#555":"#ddd"}}>{v>0?stockVis(v):"--"}</td>;})}
-                    <td style={{padding:"8px",textAlign:"right",fontWeight:800,fontSize:14,color:col}}>{stockVis(tot)}</td>
+                    {ALMS.map((a,ai)=><td key={a} style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA",borderLeft:ai===0?"2px solid "+BD:"none"}}><StockPill v={p[a]} real={vend}/></td>)}
+                    <td style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA"}}><StockPill v={tot} peso={800} real={vend}/></td>
                     <td style={{padding:"6px 8px"}}>
                       <button onClick={()=>addToCart(p)} title="Agregar a cotización"
                         style={{background:OR,color:"#fff",border:"none",borderRadius:6,width:26,height:26,cursor:"pointer",fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
@@ -2110,7 +2237,7 @@ function Portal(){
               </table>
             </div>
           ))}
-          {!mob&&filtered.length>0&&<div style={{marginTop:12}}><LineaCredito/></div>}
+          {!mob&&filtered.length>0&&<div style={{marginTop:12}}><LineaCredito esCliente={!vend}/></div>}
           {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </>}
 
