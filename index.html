@@ -1,18 +1,104 @@
-<!DOCTYPE html>
-<html lang="es">
+<!doctype html>
+<html lang="es-MX">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Portal de Precios — LlantyMoto</title>
+
+    <!-- viewport-fit=cover es lo que activa env(safe-area-inset-*):
+         sin esto, el header y el botón de cotización quedan debajo del
+         notch y de la barra de gestos en iPhone. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!-- iOS convierte "120/70-17" y los SKU en links de teléfono si no
+         se apaga: quedan azules, subrayados y marcan al tocarlos. -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- Pinta la barra del navegador del mismo negro del header. -->
+    <meta name="theme-color" content="#1A1A1A" />
+    <meta name="color-scheme" content="light" />
+
+    <title>LlantyMoto · Portal de precios</title>
+    <meta name="description" content="Catálogo y precios de llantas para moto, ATV y UTV. Grupo Tapatía." />
+
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/nicobuenrostro/portal-llantymoto/main/logo.png" />
+    <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/nicobuenrostro/portal-llantymoto/main/logo.png" />
+
+    <!-- Al agregarse a la pantalla de inicio, abre sin barra de Safari. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="LlantyMoto" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- El logo y los logotipos de marca vienen de GitHub; Firestore y
+         Auth de Google. Abrir la conexión desde el principio le quita
+         medio segundo a la primera carga en datos móviles. -->
+    <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin />
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin />
+
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: Arial, sans-serif; background: #F5F5F5; }
-      input, select, textarea, button { font-family: inherit; }
+      html {
+        /* Safari infla el texto al girar el teléfono si no se fija. */
+        -webkit-text-size-adjust: 100%;
+        background: #F5F5F5;
+      }
+      body {
+        margin: 0;
+        background: #F5F5F5;
+        color: #1A1A1A;
+        font-family: Arial, Helvetica, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        /* Evita el "rebote" gris al llegar al final de la lista. */
+        overscroll-behavior-y: none;
+      }
+      /* El destello azul al tocar botones se ve a desmano con el naranja. */
+      * { -webkit-tap-highlight-color: rgba(255, 92, 30, .15); }
+
+      /* Accesibilidad mínima: que se vea dónde está el foco al navegar
+         con teclado en la caja. */
       :focus-visible { outline: 2px solid #FF5C1E; outline-offset: 2px; }
+
+      /* El triángulo por defecto de <details> descuadraba la caja de
+         ACTUALIZAR CATÁLOGO en el teléfono. */
+      summary { list-style: none; }
+      summary::-webkit-details-marker { display: none; }
+      summary::after { content: " ▾"; color: #818181; }
+      details[open] > summary::after { content: " ▴"; }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+      }
+
+      /* Pantalla mientras carga el bundle: sin esto el usuario ve blanco
+         mudo unos segundos en 4G. */
+      #arranque {
+        position: fixed; inset: 0; display: flex; align-items: center;
+        justify-content: center; flex-direction: column; gap: 14px;
+        background: #F5F5F5; z-index: 2;
+      }
+      #arranque img { height: 54px; }
+      #arranque span { color: #818181; font-size: 12px; letter-spacing: 2px; }
+      #root:not(:empty) + #arranque { display: none; }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/main.jsx"></script>
+
+    <div id="arranque">
+      <img src="https://raw.githubusercontent.com/nicobuenrostro/portal-llantymoto/main/logo.png" alt="LlantyMoto"
+           onerror="this.style.display='none'" />
+      <span>CARGANDO...</span>
+    </div>
+
+    <noscript>
+      <div style="padding:24px;font-family:Arial,sans-serif;text-align:center">
+        Este portal necesita JavaScript activado para mostrar el catálogo.
+      </div>
+    </noscript>
+
+    <!-- ⚠️ ÚNICA LÍNEA QUE DEBES COMPARAR CON TU ARCHIVO ACTUAL.
+         Tiene que apuntar al mismo archivo de entrada que ya usabas.
+         Lo más común en Vite es /src/main.jsx; también puede ser
+         /src/index.jsx, /src/main.js o /main.jsx. Si en tu index.html
+         actual dice otra ruta, cópiala aquí tal cual. -->
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
