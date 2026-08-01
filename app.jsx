@@ -115,7 +115,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.4 · vendedores + clientes · 31jul2026";
+const VERSION = "v1.6 · permiso subir CSV · 31jul2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -356,6 +356,10 @@ function mensajeAuth(e){
 // ── Permisos ──────────────────────────────────────────────────
 const isAdminRole = s => s?.rol==="admin"||s?.rol==="superadmin";
 const isVendedor  = s => s?.lista==="VENDEDOR"||isAdminRole(s);
+// Permiso suelto: deja subir el CSV diario SIN dar acceso de
+// administrador. El vendedor con este permiso no ve clientes, ni
+// usuarios, ni configuración: solo la pantalla de subir catálogo.
+const puedeCatalogo = s => isAdminRole(s)||s?.puede_catalogo===true;
 // "Interno" = la gente de la casa. Ve todas las cotizaciones y las tres
 // listas de precio. El cliente solo ve lo suyo.
 const esInterno   = s => isVendedor(s);
@@ -1606,7 +1610,11 @@ function Portal(){
       if(!form.id&&users.find(u=>safe(u.usuario)===safe(form.usuario))){alert("Ese usuario ya existe.");setSaving(false);return;}
       // Alta: primero la cuenta en Firebase Auth; el id del perfil es su uid.
       const id=form.id||await crearCuentaAuth(form.usuario,safe(form.password));
-      const data={nombre:safe(form.nombre),empresa:safe(form.empresa),usuario:safe(form.usuario),lista:safe(form.lista),estatus:safe(form.estatus),rol:"client",actualizado:new Date().toISOString()};
+      const data={nombre:safe(form.nombre),empresa:safe(form.empresa),usuario:safe(form.usuario),lista:safe(form.lista),estatus:safe(form.estatus),rol:"client",
+        // Solo tiene sentido en vendedores: si se le cambia la lista a
+        // cliente, el permiso se apaga solo.
+        puede_catalogo: safe(form.lista)==="VENDEDOR" && form.puede_catalogo===true,
+        actualizado:new Date().toISOString()};
       if(!form.id)data.creado_en=new Date().toISOString();
       await setDoc(doc(db,COL.usuarios,id),data,{merge:true});
       const verify=await getDoc(doc(db,COL.usuarios,id));
@@ -1657,6 +1665,19 @@ function Portal(){
               <option value="ASOCIADO">ASOCIADO</option><option value="VENDEDOR">VENDEDOR (ve las tres listas)</option>
             </select>
           </div>
+          {esVend&&<div style={{marginBottom:12,background:"#faf5ff",border:"1px solid #e9d5ff",borderRadius:6,padding:"10px 12px"}}>
+            <label style={{display:"flex",alignItems:"flex-start",gap:9,cursor:"pointer"}}>
+              <input type="checkbox" checked={form.puede_catalogo===true}
+                onChange={e=>upd("puede_catalogo",e.target.checked)}
+                style={{width:16,height:16,marginTop:1,accentColor:"#9333ea",flexShrink:0}}/>
+              <span>
+                <span style={{fontSize:12,fontWeight:700,color:"#6b21a8"}}>Puede subir el catálogo diario</span>
+                <span style={{display:"block",color:GRL,fontSize:10,marginTop:2,lineHeight:1.4}}>
+                  Le aparece la pestaña SUBIR CATÁLOGO para cargar el CSV. No le da acceso a clientes, usuarios ni configuración.
+                </span>
+              </span>
+            </label>
+          </div>}
           <div style={{marginBottom:12}}>
             <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>ESTATUS</div>
             <select value={form.estatus} onChange={e=>upd("estatus",e.target.value)} style={{width:"100%",padding:"10px 12px",background:"#fafafa",border:"1px solid "+BD,fontSize:13,borderRadius:6,outline:"none"}}>
@@ -1723,7 +1744,10 @@ function Portal(){
         <div>{lista.map(u=><div key={u.id} style={{background:isAdminRole(u)?"#eff6ff":CD,border:"1px solid "+(isAdminRole(u)?"#bfdbfe":BD),borderRadius:8,padding:14,marginBottom:8}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
             <div>
-              <div style={{fontWeight:700,fontSize:13}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</div>
+              <div style={{fontWeight:700,fontSize:13}}>{u.nombre}
+                {isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}
+                {!isAdminRole(u)&&u.puede_catalogo===true&&<span style={{marginLeft:6,fontSize:9,background:"#f3e8ff",color:"#7e22ce",padding:"1px 6px",borderRadius:3,fontWeight:700}}>SUBE CSV</span>}
+              </div>
               {u.empresa&&<div style={{color:GRL,fontSize:11}}>{u.empresa}</div>}
             </div>
             <Badge val={u.estatus}/>
@@ -1740,7 +1764,10 @@ function Portal(){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,background:"#fff"}}>
             <thead><tr style={{background:DK}}>{["NOMBRE","EMPRESA","USUARIO","CONTRASEÑA","ROL","LISTA","ESTATUS","ACCIONES"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:1}}>{h}</th>)}</tr></thead>
             <tbody>{lista.map((u,i)=><tr key={u.id} style={{borderTop:"1px solid "+BD,background:isAdminRole(u)?"#eff6ff":i%2?"#FAFAFA":"#fff"}}>
-              <td style={{padding:"9px 14px",fontWeight:600}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</td>
+              <td style={{padding:"9px 14px",fontWeight:600}}>{u.nombre}
+                {isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}
+                {!isAdminRole(u)&&u.puede_catalogo===true&&<span style={{marginLeft:6,fontSize:9,background:"#f3e8ff",color:"#7e22ce",padding:"1px 6px",borderRadius:3,fontWeight:700}}>SUBE CSV</span>}
+              </td>
               <td style={{padding:"9px 14px",color:GRL,fontSize:11}}>{u.empresa||"—"}</td>
               <td style={{padding:"9px 14px",fontFamily:"monospace",color:GRL,fontSize:11}}>{u.usuario}</td>
               <td style={{padding:"9px 14px"}}><PassCell/></td>
@@ -1764,6 +1791,59 @@ function Portal(){
   const porNombre = (a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es");
   const equipo   = users.filter(u=>isVendedor(u)).sort(porNombre);
   const clientes = users.filter(u=>!isVendedor(u)).sort(porNombre);
+
+  // El optimizador es un HTML independiente que vive en public/.
+  // Se muestra dentro del portal con un iframe: así no hay que
+  // portarlo a React y sigue funcionando exactamente igual.
+  const PanelOptimizador=(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:13,color:OR}}>OPTIMIZADOR DE PAQUETES</div>
+          <div style={{color:GRL,fontSize:11,marginTop:2}}>Herramienta interna. Los clientes no la ven.</div>
+        </div>
+        <a href="/optimizador.html" target="_blank" rel="noopener noreferrer"
+          style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:6,fontSize:11,fontWeight:700,textDecoration:"none"}}>
+          ABRIR EN PESTAÑA NUEVA ↗
+        </a>
+      </div>
+      <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",background:"#fff"}}>
+        <iframe src="/optimizador.html" title="Optimizador de paquetes"
+          style={{width:"100%",height:mob?"68vh":"78vh",border:"none",display:"block"}}/>
+      </div>
+    </div>
+  );
+
+  // El mismo bloque sirve para el administrador y para el vendedor con
+  // permiso. Plegado en el teléfono del admin (donde es una tarea de
+  // una vez al día), abierto para quien entra justo a subir el CSV.
+  const BloqueCatalogo=({plegable=true})=>{
+    const controles=<>
+      <div style={{flex:1,minWidth:180}}>
+        <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
+        <div style={{color:"#8A8A8A",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, TOTAL</div>
+      </div>
+      <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
+      <Btn onClick={()=>{setMsg("");fref.current.click();}}>SUBIR CSV</Btn>
+      <button onClick={loadProducts} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"9px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
+      {msg&&<div style={{fontSize:11,width:"100%",padding:"8px 12px",borderRadius:6,marginTop:8,
+        background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("❌")?"#fef2f2":"#fffbeb",
+        color:msg.startsWith("✅")?"#16a34a":msg.startsWith("❌")?"#dc2626":"#d97706",
+        border:`1px solid ${msg.startsWith("✅")?"#bbf7d0":msg.startsWith("❌")?"#fecaca":"#fde68a"}`}}>{msg}</div>}
+    </>;
+    const caja={background:CD,border:"1px solid "+BD,borderRadius:8,marginBottom:12,boxShadow:"0 1px 4px rgba(0,0,0,.05)"};
+    return (mob&&plegable)?(
+      <details style={caja}>
+        <summary style={{padding:"11px 14px",fontWeight:800,fontSize:12,cursor:"pointer"}}>ACTUALIZAR CATÁLOGO</summary>
+        <div style={{padding:"0 14px 14px",display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>{controles}</div>
+      </details>
+    ):(
+      <div style={{...caja,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        {plegable&&<div style={{fontWeight:800,fontSize:12,width:"100%"}}>ACTUALIZAR CATÁLOGO</div>}
+        {controles}
+      </div>
+    );
+  };
 
   const TabBar=({items})=>(
     <div style={{background:CD,display:"flex",borderBottom:"1px solid "+BD,padding:mob?"0 8px":"0 24px",overflowX:"auto",scrollbarWidth:"none",
@@ -1816,39 +1896,12 @@ function Portal(){
       {Hdr}{modal&&<ClientModal/>}
       {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
-      <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["settings","CONFIGURACIÓN"]]}/>
+      <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
 
         {tab==="products"&&<div>
-          {/* En el teléfono se pliega: es una tarea de una vez al día y
-              se llevaba el primer tercio de la pantalla antes del buscador. */}
-          {(()=>{
-            const controles=<>
-              <div style={{flex:1,minWidth:180}}>
-                <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
-                <div style={{color:"#8A8A8A",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, TOTAL</div>
-              </div>
-              <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
-              <Btn onClick={()=>{setMsg("");fref.current.click();}}>SUBIR CSV</Btn>
-              <button onClick={loadProducts} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"9px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
-              {msg&&<div style={{fontSize:11,width:"100%",padding:"8px 12px",borderRadius:6,marginTop:8,
-                background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("❌")?"#fef2f2":"#fffbeb",
-                color:msg.startsWith("✅")?"#16a34a":msg.startsWith("❌")?"#dc2626":"#d97706",
-                border:`1px solid ${msg.startsWith("✅")?"#bbf7d0":msg.startsWith("❌")?"#fecaca":"#fde68a"}`}}>{msg}</div>}
-            </>;
-            const caja={background:CD,border:"1px solid "+BD,borderRadius:8,marginBottom:12,boxShadow:"0 1px 4px rgba(0,0,0,.05)"};
-            return mob?(
-              <details style={caja}>
-                <summary style={{padding:"11px 14px",fontWeight:800,fontSize:12,cursor:"pointer"}}>ACTUALIZAR CATÁLOGO</summary>
-                <div style={{padding:"0 14px 14px",display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>{controles}</div>
-              </details>
-            ):(
-              <div style={{...caja,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                <div style={{fontWeight:800,fontSize:12,width:"100%"}}>ACTUALIZAR CATÁLOGO</div>
-                {controles}
-              </div>
-            );
-          })()}
+          {/* En el teléfono se pliega: es una tarea de una vez al día. */}
+          <BloqueCatalogo/>
 
           <Buscador search={search} ds={ds} onChange={setSearch} marca={marca} setMarca={setMarca} marcas={marcas} count={filtered.length} mob={mob} top={hdrH}/>
           {prodLoad&&<div style={{textAlign:"center",padding:30,color:GRL}}>Cargando catálogo...</div>}
@@ -1939,6 +1992,8 @@ function Portal(){
         {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
         {tab==="arribos"&&<ProximosArribos session={session} mob={mob}/>}
 
+        {tab==="optimizador"&&PanelOptimizador}
+
         {tab==="settings"&&<div style={{maxWidth:560}}>
           <div style={{background:CD,border:"1px solid "+BD,borderRadius:10,padding:24,marginBottom:16}}>
             <div style={{fontWeight:800,fontSize:13,color:OR,marginBottom:16}}>CAMBIAR MI CONTRASEÑA</div>
@@ -1981,7 +2036,8 @@ function Portal(){
         <span style={{color:"#fff",fontSize:13,fontWeight:700}}>CONTADO ANTICIPADO: <span style={{color:"#FFE0C0"}}>3% DE DESCUENTO ADICIONAL</span></span>
       </div>}
 
-      <TabBar items={[["products","CATÁLOGO"],["quotes",vend?"COTIZACIONES":"MIS COTIZACIONES"],...(vend?[["arribos","PRÓXIMOS ARRIBOS"]]:[])]}/>
+      <TabBar items={[["products","CATÁLOGO"],["quotes",vend?"COTIZACIONES":"MIS COTIZACIONES"],...(vend?[["arribos","PRÓXIMOS ARRIBOS"],["optimizador","OPTIMIZADOR"]]:[]),
+        ...(puedeCatalogo(session)?[["subir","SUBIR CATÁLOGO"]]:[])]}/>
 
       <div style={{padding:mob?12:20,maxWidth:1400,margin:"0 auto"}}>
         {tab==="products"&&<>
@@ -2060,6 +2116,22 @@ function Portal(){
 
         {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
         {tab==="arribos"&&vend&&<ProximosArribos session={session} mob={mob}/>}
+
+        {/* vend blinda la pestaña: un cliente nunca la ve ni la abre. */}
+        {tab==="optimizador"&&vend&&PanelOptimizador}
+
+        {tab==="subir"&&puedeCatalogo(session)&&<div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontWeight:800,fontSize:13,color:OR}}>SUBIR CATÁLOGO DEL DÍA</div>
+            <div style={{color:GRL,fontSize:11,marginTop:2}}>
+              Elige el archivo <strong style={{color:"#1a1a1a"}}>LLANTYAPP_fecha.csv</strong> que genera el programa de inventario, en la carpeta SALIDA.
+            </div>
+          </div>
+          <BloqueCatalogo plegable={false}/>
+          <div style={{color:GRL,fontSize:11,lineHeight:1.6,background:"#FFF5F2",border:"1px solid #ffd9c9",borderRadius:6,padding:"10px 13px"}}>
+            Reemplaza el catálogo completo y guarda un respaldo del anterior. Si subes el archivo equivocado, vuelve a subir el correcto: no se pierde nada.
+          </div>
+        </div>}
       </div>
     </div>
   );
