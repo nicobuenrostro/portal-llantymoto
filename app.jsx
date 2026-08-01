@@ -104,7 +104,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.0 · 31jul2026 · 21:30";
+const VERSION = "v1.1 · movil · 31jul2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -407,11 +407,14 @@ function Btn({onClick,children,danger,ghost,sm,disabled}){
     {children}
   </button>;
 }
-function Logo({h=34,eslogan=true}){
+function Logo({h=34,eslogan=true,max=250}){
   // El eslogan va centrado bajo el logotipo: alineado a la izquierda
   // arrancaba bajo el isotipo LM y se veía descuadrado.
-  return <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
-    <img src={LOGO_URL} alt={EMPRESA.nombre} style={{height:h,objectFit:"contain",maxWidth:250}}
+  // `max` permite achicarlo en el header del teléfono sin tocar el
+  // login ni el PDF: con 250px fijos el logotipo solo se comía media
+  // pantalla y empujaba el badge de IVA encima.
+  return <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center",minWidth:0}}>
+    <img src={LOGO_URL} alt={EMPRESA.nombre} style={{height:h,objectFit:"contain",maxWidth:max}}
       onError={e=>{e.target.style.display="none";}}/>
     {eslogan && <div style={{color:GRL,fontSize:h>=40?11:10,fontStyle:"italic",whiteSpace:"nowrap"}}>{ESLOGAN}</div>}
   </div>;
@@ -451,26 +454,47 @@ function MarcaFiltro({m,activa,onClick,mob}){
 
 function Buscador({search,ds,onChange,marca,setMarca,marcas,count,mob,top=0}){
   const tipo=ds.trim().length>=2?detectTipo(ds.trim()):"";
+  // Degradado en el borde derecho: avisa que la fila de marcas sigue.
+  // Un chip cortado en seco se lee como error, no como "hay más".
+  const fade=mob?{maskImage:"linear-gradient(to right,#000 88%,transparent)",
+                  WebkitMaskImage:"linear-gradient(to right,#000 88%,transparent)"}:{};
   // Se queda pegado bajo el header: con 800+ SKUs el vendedor hace mucho
   // scroll y perder la barra a media lista es pura fricción.
   return <div style={{position:"sticky",top,zIndex:8,background:BG,paddingTop:10,marginTop:-10,paddingBottom:10}}>
-  <div style={{background:"#222",padding:mob?"12px 12px":"12px 14px",borderBottom:"3px solid "+OR,display:"flex",flexDirection:mob?"column":"row",gap:8,alignItems:mob?"stretch":"center",borderRadius:8,marginBottom:10}}>
-    <input value={search} onChange={e=>onChange(e.target.value)}
-      placeholder={mob?"Buscar medida, marca o SKU...":"Buscar por medida, marca, SKU o descripción (ej: 120/70-17, mitas 90/90-21, 25x10-12)"}
-      style={{flex:1,width:"100%",padding:"11px 14px",border:"2px solid transparent",borderRadius:8,background:"#fff",fontSize:14,color:"#222",outline:"none",boxSizing:"border-box"}}/>
+  <div style={{background:"#222",padding:mob?"10px":"12px 14px",borderBottom:"3px solid "+OR,display:"flex",flexDirection:mob?"column":"row",gap:8,alignItems:mob?"stretch":"center",borderRadius:8,marginBottom:10}}>
+    <div style={{position:"relative",flex:1,display:"flex",alignItems:"center"}}>
+      {/* 16px NO es capricho: con menos, Safari hace zoom al enfocar y
+          deja la página descuadrada. El teclado va sin autocorrector
+          porque corregía los SKU. */}
+      <input value={search} onChange={e=>onChange(e.target.value)}
+        inputMode="search" enterKeyHint="search"
+        autoCorrect="off" autoCapitalize="off" spellCheck={false}
+        placeholder={mob?"Buscar medida, marca o SKU...":"Buscar por medida, marca, SKU o descripción (ej: 120/70-17, mitas 90/90-21, 25x10-12)"}
+        style={{width:"100%",padding:search?"11px 42px 11px 14px":"11px 14px",border:"2px solid transparent",borderRadius:8,background:"#fff",fontSize:mob?16:14,color:"#222",outline:"none",boxSizing:"border-box",WebkitAppearance:"none"}}/>
+      {search&&<button onClick={()=>onChange("")} aria-label="Limpiar búsqueda"
+        style={{position:"absolute",right:6,width:32,height:32,border:"none",background:"#EEE",color:"#555",borderRadius:"50%",fontSize:13,fontWeight:800,cursor:"pointer",lineHeight:1,padding:0}}>✕</button>}
+    </div>
     <span style={{color:OR,fontSize:12,fontWeight:700,background:"rgba(255,92,30,.1)",border:"1px solid rgba(255,92,30,.3)",padding:"7px 14px",borderRadius:20,whiteSpace:"nowrap",textAlign:"center"}}>
       {count} producto{count!==1?"s":""}{tipo?` · ${tipo}`:""}
     </span>
   </div>
-  <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,scrollbarWidth:"none"}}>
+  <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,scrollbarWidth:"none",...fade}}>
     {["",...marcas.filter(m=>!esOculta(m))].map(m=>
       <MarcaFiltro key={m||"todas"} m={m} mob={mob} activa={marca===m} onClick={()=>setMarca(m)}/>)}
     {marcas.some(esOculta) &&
       <MarcaFiltro m={OTRAS} mob={mob} activa={marca===OTRAS} onClick={()=>setMarca(OTRAS)}/>}
   </div></div>;
 }
-function Pager({total,pg,setPg,ps=50}){
+function Pager({total,pg,setPg,ps=50,mob}){
   const pages=Math.max(1,Math.ceil(total/ps));
+  // En el teléfono la lista se acumula: ANT/SIG con scrollTo(0,0) te
+  // aventaba hasta el header y perdías de vista lo que buscabas.
+  if(mob) return pg+1>=pages?null:(
+    <button onClick={()=>setPg(p=>p+1)}
+      style={{width:"100%",padding:14,marginTop:4,background:"#fff",color:OR,border:"2px solid "+OR,borderRadius:8,fontWeight:800,fontSize:13,letterSpacing:1,cursor:"pointer"}}>
+      CARGAR {Math.min(ps,total-(pg+1)*ps)} MÁS
+    </button>
+  );
   return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:12,flexWrap:"wrap",gap:8}}>
     <span style={{color:GRL,fontSize:11}}>{total} productos · {PRECIOS_CON_IVA?"todos causan IVA, precios con IVA incluido":"precios antes de IVA"}</span>
     <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1179,63 +1203,56 @@ function CreateAdmin({session,mob}){
 // ── Ficha de producto (móvil) ─────────────────────────────────
 function CardProducto({p,vend,lista,onAdd}){
   const tot=calcTotal(p), col=semaforo(tot);
+  // La ficha se compactó: antes cabía UNA por pantalla y el stock
+  // aparecía tres veces (badge, TLAJO/CHAPALA y TOTAL). El aviso de
+  // IVA vive ahora en la franja del header, no en cada tarjeta.
   return(
     <div style={{background:CD,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.08)",overflow:"hidden",borderTop:"3px solid "+OR,marginBottom:10}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px 8px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px 6px"}}>
         <MarcaChip marca={p.marca} size={12}/>
         <span style={{display:"flex",alignItems:"center",gap:6,fontSize:13,fontWeight:800,color:col}}>
           <span style={{width:10,height:10,borderRadius:"50%",background:col,flexShrink:0}}/>
           {stockVis(tot)} pzs
         </span>
       </div>
-      <div style={{fontFamily:"monospace",fontSize:10,color:"#BBB",padding:"0 14px 4px"}}>{p.codigo}</div>
+      {/* #BBB sobre blanco daba 1.9:1 de contraste: ilegible bajo el sol. */}
+      <div style={{fontFamily:"monospace",fontSize:10,color:"#8A8A8A",padding:"0 14px 4px"}}>{p.codigo}</div>
       <div style={{fontSize:22,fontWeight:900,color:DK,padding:"0 14px 6px",letterSpacing:-.5,lineHeight:1.1}}>{p.medida||"—"}</div>
-      <div style={{fontSize:13,color:"#444",padding:"0 14px 12px",lineHeight:1.5,fontWeight:500}}>{p.descripcion}</div>
+      <div style={{fontSize:13,color:"#444",padding:"0 14px 12px",lineHeight:1.45,fontWeight:500}}>{p.descripcion}</div>
 
       {vend?(
+        // Mismo orden que el CSV, el carrito y procesar_inventario.py:
+        // ASOCIADO · DISTRIBUIDOR · PÚBLICO.
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",background:BG,borderTop:"1px solid "+BD}}>
-          {[["PÚBLICO",p.publico,C_PUB],["DISTRIBUIDOR",p.distribuidor,C_DIST],["ASOCIADO",p.asociado,C_ASOC]].map(([l,v,st])=>(
+          {[["ASOCIADO",p.asociado,C_ASOC],["DISTRIBUIDOR",p.distribuidor,C_DIST],["PÚBLICO",p.publico,C_PUB]].map(([l,v,st])=>(
             <div key={l} style={{padding:"10px 6px",textAlign:"center",background:st.bg}}>
-              <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.5}}>{l}</div>
-              <div style={{fontSize:8,color:"#BBB",fontWeight:600,marginBottom:3}}>IVA incl.</div>
-              <div style={{fontSize:15,fontWeight:800,color:st.c}}>{money(v)}</div>
+              <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.5,marginBottom:4}}>{l}</div>
+              <div style={{fontSize:16,fontWeight:800,color:st.c}}>{money(v)}</div>
             </div>
           ))}
         </div>
       ):(
         <div style={{background:BG,borderTop:"1px solid "+BD,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.6}}>TU PRECIO ({safe(lista)||"PÚBLICO"}) · IVA INCL.</div>
+            <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.6}}>TU PRECIO ({safe(lista)||"PÚBLICO"})</div>
             <div style={{fontSize:10,color:GRL,marginTop:2}}>Almacén ppal: <strong style={{color:DK}}>{almPpal(p)}</strong></div>
           </div>
           <span style={{fontSize:19,fontWeight:900,color:OR}}>{money(getPrecio(p,lista))}</span>
         </div>
       )}
 
-      <div style={{borderTop:"1px solid "+BD,background:"#FAFAFA"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px 4px"}}>
-          <span style={{fontSize:9,fontWeight:700,color:GRL,letterSpacing:.6}}>DISPONIBILIDAD POR ALMACÉN</span>
-          <span style={{fontSize:10,fontWeight:800,color:tot>0?"#16A34A":"#DC2626"}}>{tot>0?"● Disponible":"● Sin stock"}</span>
-        </div>
-        <div style={{display:"flex",gap:8,padding:"4px 14px 10px"}}>
-          {ALMS.map((a,i)=>{const v=safeNum(p[a]);return(
-            <div key={a} style={{display:"flex",flexDirection:"column",alignItems:"center",background:"#fff",border:"1px solid "+BD,borderRadius:8,padding:"6px 12px",flex:1}}>
-              <span style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.5,marginBottom:3}}>{ALMS_L[i]}</span>
-              <span style={{fontSize:v>0?16:12,fontWeight:v>0?800:400,color:v>0?DK:"#ccc"}}>{v>0?stockVis(v):"--"}</span>
-            </div>
-          );})}
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",background:"#FFF5F2",border:"1px solid "+OR,borderRadius:8,padding:"6px 12px",flex:1}}>
-            <span style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.5,marginBottom:3}}>TOTAL</span>
-            <span style={{fontSize:16,fontWeight:800,color:OR}}>{stockVis(tot)}</span>
-          </div>
-        </div>
+      <div style={{borderTop:"1px solid "+BD,background:"#FAFAFA",display:"flex",alignItems:"center",gap:12,padding:"8px 14px",flexWrap:"wrap"}}>
+        <span style={{fontSize:9,fontWeight:700,color:GRL,letterSpacing:.6}}>EXISTENCIA</span>
+        {ALMS.map((a,i)=>{const v=safeNum(p[a]);return(
+          <span key={a} style={{fontSize:12,color:GRL}}>
+            {ALMS_L[i]} <strong style={{color:v>0?DK:"#B0B0B0",fontWeight:800,fontSize:13}}>{v>0?stockVis(v):"—"}</strong>
+          </span>
+        );})}
       </div>
-      <button onClick={onAdd} style={{width:"100%",padding:11,background:OR,color:"#fff",border:"none",cursor:"pointer",fontWeight:800,fontSize:12,letterSpacing:1}}>
-        ＋ AGREGAR A COTIZACIÓN
+      <button onClick={tot>0?onAdd:undefined} disabled={tot===0}
+        style={{width:"100%",padding:14,background:tot>0?OR:"#C9C9C9",color:"#fff",border:"none",cursor:tot>0?"pointer":"not-allowed",fontWeight:800,fontSize:13,letterSpacing:1}}>
+        {tot>0?"＋ AGREGAR A COTIZACIÓN":"SIN EXISTENCIA"}
       </button>
-      <div style={{textAlign:"center",padding:7,fontSize:9,color:"#999",background:"#FAFAFA",borderTop:"1px solid "+BD,letterSpacing:.3,fontWeight:600}}>
-        {PRECIOS_CON_IVA?"TODOS LOS PRECIOS INCLUYEN IVA 16%":"PRECIOS ANTES DE IVA"}
-      </div>
     </div>
   );
 }
@@ -1582,37 +1599,48 @@ function Portal(){
     </div>;
   }
 
+  // El header va en DOS filas en el teléfono. En una sola, el logotipo
+  // (250px) + el badge de IVA (nowrap) + SALIR sumaban 400px en una
+  // pantalla de 360: el badge se encimaba y SALIR quedaba cortado.
   const Hdr=session&&(
-    <header ref={hdrRef} style={{background:DK,padding:mob?"10px 14px":"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:9,boxShadow:"0 2px 10px rgba(0,0,0,.4)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <Logo h={mob?36:50}/>
-        {!mob&&<>
-          <div style={{width:1,height:24,background:"rgba(255,255,255,.2)"}}/>
-          <span style={{color:"rgba(255,255,255,.75)",fontSize:10,letterSpacing:2}}>{isAdminRole(session)?"PANEL ADMINISTRADOR":"PORTAL DE PRECIOS"}</span>
-        </>}
+    <header ref={hdrRef} style={{background:DK,position:"sticky",top:0,zIndex:9,boxShadow:"0 2px 10px rgba(0,0,0,.4)",paddingTop:"env(safe-area-inset-top)",overflow:"hidden"}}>
+      <div style={{padding:mob?"8px 12px":"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0,flex:1}}>
+          <Logo h={mob?28:50} eslogan={!mob} max={mob?140:250}/>
+          {!mob&&<>
+            <div style={{width:1,height:24,background:"rgba(255,255,255,.2)"}}/>
+            <span style={{color:"rgba(255,255,255,.75)",fontSize:10,letterSpacing:2}}>{isAdminRole(session)?"PANEL ADMINISTRADOR":"PORTAL DE PRECIOS"}</span>
+          </>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          {!mob&&<span style={{background:OR,color:"#fff",fontSize:10,fontWeight:700,padding:"4px 12px",borderRadius:20,letterSpacing:.5,whiteSpace:"nowrap"}}>
+            {PRECIOS_CON_IVA?"PRECIOS CON IVA INCLUIDO":"PRECIOS SIN IVA"}
+          </span>}
+          {!mob&&<div style={{textAlign:"right"}}>
+            <div style={{color:"#fff",fontSize:12,fontWeight:600}}>{session.nombre}</div>
+            {session.empresa&&<div style={{color:"rgba(255,255,255,.6)",fontSize:10}}>{session.empresa}</div>}
+          </div>}
+          <button onClick={doLogout} style={{background:"rgba(255,255,255,.12)",color:"#fff",border:"1px solid rgba(255,255,255,.3)",padding:"7px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11,letterSpacing:1,flexShrink:0}}>SALIR</button>
+        </div>
       </div>
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <span style={{background:OR,color:"#fff",fontSize:10,fontWeight:700,padding:"4px 12px",borderRadius:20,letterSpacing:.5,whiteSpace:"nowrap"}}>
-          {PRECIOS_CON_IVA?"PRECIOS CON IVA INCLUIDO":"PRECIOS SIN IVA"}
-        </span>
-        {!mob&&<div style={{textAlign:"right"}}>
-          <div style={{color:"#fff",fontSize:12,fontWeight:600}}>{session.nombre}</div>
-          {session.empresa&&<div style={{color:"rgba(255,255,255,.6)",fontSize:10}}>{session.empresa}</div>}
-        </div>}
-        <button onClick={doLogout} style={{background:"rgba(255,255,255,.12)",color:"#fff",border:"1px solid rgba(255,255,255,.3)",padding:"7px 14px",borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:11,letterSpacing:1}}>SALIR</button>
-      </div>
+      {/* Esta franja carga los dos avisos permanentes, así el teléfono
+          se ahorra la barra naranja de CONTADO y el recuadro de IVA. */}
+      {mob&&<div style={{background:OR,color:"#fff",fontSize:10,fontWeight:800,textAlign:"center",padding:"4px 8px",letterSpacing:.3}}>
+        {PRECIOS_CON_IVA?"PRECIOS CON IVA INCLUIDO":"PRECIOS SIN IVA"} · CONTADO ANTICIPADO −3%
+      </div>}
     </header>
   );
 
   const CartFab=cart.length>0&&!cartOpen&&(
-    <button onClick={()=>setCartOpen(true)} style={{position:"fixed",bottom:24,right:24,zIndex:1000,background:OR,color:"#fff",border:"none",borderRadius:50,padding:"12px 20px",cursor:"pointer",fontWeight:800,fontSize:13,boxShadow:"0 4px 16px rgba(255,92,30,.5)",display:"flex",alignItems:"center",gap:8}}>
+    <button onClick={()=>setCartOpen(true)} style={{position:"fixed",bottom:"calc(20px + env(safe-area-inset-bottom))",right:"calc(16px + env(safe-area-inset-right))",zIndex:1000,background:OR,color:"#fff",border:"none",borderRadius:50,padding:"12px 20px",cursor:"pointer",fontWeight:800,fontSize:13,boxShadow:"0 4px 16px rgba(255,92,30,.5)",display:"flex",alignItems:"center",gap:8}}>
       COTIZACIÓN
       <span style={{background:"#fff",color:OR,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{cart.length}</span>
     </button>
   );
 
   const TabBar=({items})=>(
-    <div style={{background:CD,display:"flex",borderBottom:"1px solid "+BD,padding:mob?"0 8px":"0 24px",overflowX:"auto"}}>
+    <div style={{background:CD,display:"flex",borderBottom:"1px solid "+BD,padding:mob?"0 8px":"0 24px",overflowX:"auto",scrollbarWidth:"none",
+      ...(mob?{maskImage:"linear-gradient(to right,#000 90%,transparent)",WebkitMaskImage:"linear-gradient(to right,#000 90%,transparent)"}:{})}}>
       {items.map(([k,l])=>(
         <button key={k} onClick={()=>setTab(k)} style={{padding:mob?"11px 12px":"12px 18px",background:"none",border:"none",color:tab===k?OR:GRL,borderBottom:tab===k?"3px solid "+OR:"3px solid transparent",cursor:"pointer",fontSize:mob?11:12,fontWeight:700,letterSpacing:1,marginBottom:-1,whiteSpace:"nowrap"}}>{l}</button>
       ))}
@@ -1665,20 +1693,35 @@ function Portal(){
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
 
         {tab==="products"&&<div>
-          <div style={{background:CD,border:"1px solid "+BD,borderRadius:8,padding:14,marginBottom:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",boxShadow:"0 1px 4px rgba(0,0,0,.05)"}}>
-            <div style={{flex:1,minWidth:180}}>
-              <div style={{fontWeight:800,fontSize:12,marginBottom:3}}>ACTUALIZAR CATÁLOGO</div>
-              <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
-              <div style={{color:"#bbb",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, TOTAL</div>
-            </div>
-            <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
-            <Btn onClick={()=>{setMsg("");fref.current.click();}}>SUBIR CSV</Btn>
-            <button onClick={loadProducts} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"9px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
-            {msg&&<div style={{fontSize:11,width:"100%",padding:"8px 12px",borderRadius:6,
-              background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("❌")?"#fef2f2":"#fffbeb",
-              color:msg.startsWith("✅")?"#16a34a":msg.startsWith("❌")?"#dc2626":"#d97706",
-              border:`1px solid ${msg.startsWith("✅")?"#bbf7d0":msg.startsWith("❌")?"#fecaca":"#fde68a"}`}}>{msg}</div>}
-          </div>
+          {/* En el teléfono se pliega: es una tarea de una vez al día y
+              se llevaba el primer tercio de la pantalla antes del buscador. */}
+          {(()=>{
+            const controles=<>
+              <div style={{flex:1,minWidth:180}}>
+                <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
+                <div style={{color:"#8A8A8A",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, TOTAL</div>
+              </div>
+              <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
+              <Btn onClick={()=>{setMsg("");fref.current.click();}}>SUBIR CSV</Btn>
+              <button onClick={loadProducts} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"9px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
+              {msg&&<div style={{fontSize:11,width:"100%",padding:"8px 12px",borderRadius:6,marginTop:8,
+                background:msg.startsWith("✅")?"#f0fdf4":msg.startsWith("❌")?"#fef2f2":"#fffbeb",
+                color:msg.startsWith("✅")?"#16a34a":msg.startsWith("❌")?"#dc2626":"#d97706",
+                border:`1px solid ${msg.startsWith("✅")?"#bbf7d0":msg.startsWith("❌")?"#fecaca":"#fde68a"}`}}>{msg}</div>}
+            </>;
+            const caja={background:CD,border:"1px solid "+BD,borderRadius:8,marginBottom:12,boxShadow:"0 1px 4px rgba(0,0,0,.05)"};
+            return mob?(
+              <details style={caja}>
+                <summary style={{padding:"11px 14px",fontWeight:800,fontSize:12,cursor:"pointer"}}>ACTUALIZAR CATÁLOGO</summary>
+                <div style={{padding:"0 14px 14px",display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>{controles}</div>
+              </details>
+            ):(
+              <div style={{...caja,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <div style={{fontWeight:800,fontSize:12,width:"100%"}}>ACTUALIZAR CATÁLOGO</div>
+                {controles}
+              </div>
+            );
+          })()}
 
           <Buscador search={search} ds={ds} onChange={setSearch} marca={marca} setMarca={setMarca} marcas={marcas} count={filtered.length} mob={mob} top={hdrH}/>
           {prodLoad&&<div style={{textAlign:"center",padding:30,color:GRL}}>Cargando catálogo...</div>}
@@ -1690,7 +1733,7 @@ function Portal(){
           {/* En el teléfono, tarjetas: la tabla obligaba a deslizar de lado
               para alcanzar precios y existencia. */}
           {!prodLoad&&products.length>0&&mob&&(
-            <div>{filtered.slice(page*PS,(page+1)*PS).map((p,i)=>
+            <div style={{paddingBottom:mob?96:0}}>{filtered.slice(0,(page+1)*PS).map((p,i)=>
               <CardProducto key={p.id||i} p={p} vend={true} lista="VENDEDOR" onAdd={()=>addToCart(p)}/>
             )}</div>
           )}
@@ -1722,7 +1765,7 @@ function Portal(){
               })}</tbody>
             </table>
           </div>}
-          {products.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS}/>}
+          {products.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </div>}
 
         {tab==="clients"&&<div>
@@ -1811,23 +1854,24 @@ function Portal(){
       {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} onClose={()=>setCartOpen(false)}/>}
       {CartFab}{Hdr}
 
-      <div style={{background:"linear-gradient(90deg,#FF5C1E,#E04A10)",padding:"9px "+(mob?"12px":"24px"),display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-        <span style={{color:"#fff",fontSize:mob?11:13,fontWeight:700}}>CONTADO ANTICIPADO: <span style={{color:"#FFE0C0"}}>3% DE DESCUENTO ADICIONAL</span></span>
-      </div>
+      {/* En el teléfono este aviso viaja en la franja del header. */}
+      {!mob&&<div style={{background:"linear-gradient(90deg,#FF5C1E,#E04A10)",padding:"9px 24px",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <span style={{color:"#fff",fontSize:13,fontWeight:700}}>CONTADO ANTICIPADO: <span style={{color:"#FFE0C0"}}>3% DE DESCUENTO ADICIONAL</span></span>
+      </div>}
 
       <TabBar items={[["products","CATÁLOGO"],["quotes",vend?"COTIZACIONES":"MIS COTIZACIONES"],...(vend?[["arribos","PRÓXIMOS ARRIBOS"]]:[])]}/>
 
       <div style={{padding:mob?12:20,maxWidth:1400,margin:"0 auto"}}>
         {tab==="products"&&<>
-          <div style={{background:"#FFF5F2",borderLeft:"3px solid "+OR,border:"1px solid #ffd9c9",borderRadius:6,padding:"9px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+          {!mob&&<div style={{background:"#FFF5F2",borderLeft:"3px solid "+OR,border:"1px solid #ffd9c9",borderRadius:6,padding:"9px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
             <span style={{color:OR,fontWeight:800}}>i</span>
             <span style={{color:GRL,fontSize:11}}>
               {PRECIOS_CON_IVA
                 ? <>Todos los productos causan IVA. Los precios que ves <strong style={{color:"#1a1a1a"}}>ya lo incluyen</strong>, y tu cotización desglosa subtotal e IVA.</>
                 : <>Los precios mostrados son <strong style={{color:"#1a1a1a"}}>antes de IVA</strong>.</>}
             </span>
-          </div>
-          {vend&&<div style={{background:"#f3e8ff",border:"1px solid #d8b4fe",borderRadius:6,padding:"8px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+          </div>}
+          {vend&&!mob&&<div style={{background:"#f3e8ff",border:"1px solid #d8b4fe",borderRadius:6,padding:"8px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
             <span style={{color:"#9333ea",fontWeight:700}}>★</span>
             <span style={{color:"#9333ea",fontSize:11,fontWeight:700}}>Modo vendedor — ves las tres listas de precios</span>
           </div>}
@@ -1842,7 +1886,7 @@ function Portal(){
           </div>}
 
           {!prodLoad&&filtered.length>0&&(mob?(
-            <div>{filtered.slice(page*PS,(page+1)*PS).map((p,i)=>
+            <div style={{paddingBottom:mob?96:0}}>{filtered.slice(0,(page+1)*PS).map((p,i)=>
               <CardProducto key={p.id||i} p={p} vend={vend} lista={lista} onAdd={()=>addToCart(p)}/>
             )}</div>
           ):(
@@ -1880,7 +1924,7 @@ function Portal(){
               </table>
             </div>
           ))}
-          {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS}/>}
+          {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </>}
 
         {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
