@@ -94,11 +94,10 @@
       </div>
     </noscript>
 
-    <!-- ⚠️ ÚNICA LÍNEA QUE DEBES COMPARAR CON TU ARCHIVO ACTUAL.
-         Tiene que apuntar al mismo archivo de entrada que ya usabas.
-         Lo más común en Vite es /src/main.jsx; también puede ser
-         /src/index.jsx, /src/main.js o /main.jsx. Si en tu index.html
-         actual dice otra ruta, cópiala aquí tal cual. -->
-    <script type="module" src="/src/main.jsx"></script>
+    <!-- En este proyecto main.jsx está en la RAÍZ del repo, junto a
+         app.jsx y package.json. Por eso la ruta es /main.jsx y NO
+         /src/main.jsx: con la ruta equivocada el build de Vite truena
+         y el sitio se queda publicado en la versión anterior. -->
+    <script type="module" src="/main.jsx"></script>
   </body>
 </html>
