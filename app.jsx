@@ -115,7 +115,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v1.2 · movil + credito · 31jul2026";
+const VERSION = "v1.3 · equipo/clientes · 31jul2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1635,11 +1635,14 @@ function Portal(){
 
   function ClientModal(){
     const isEdit=modal.mode==="edit";
-    const [form,setForm]=useState(isEdit?{...modal.data,password:""}:{...emptyC});
+    // Al crear, modal.data puede traer la lista ya elegida (el botón
+    // "+ VENDEDOR" la manda), así no hay que acordarse de cambiarla.
+    const [form,setForm]=useState(isEdit?{...modal.data,password:""}:{...emptyC,...(modal.data||{})});
+    const esVend=safe(form.lista)==="VENDEDOR";
     const upd=(k,v)=>setForm(p=>({...p,[k]:v}));
     return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}}>
       <div style={{background:CD,borderRadius:10,padding:24,width:"100%",maxWidth:460,boxShadow:"0 8px 40px rgba(0,0,0,.2)",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{fontWeight:800,fontSize:14,color:OR,marginBottom:18}}>{isEdit?"EDITAR CLIENTE":"NUEVO CLIENTE"}</div>
+        <div style={{fontWeight:800,fontSize:14,color:esVend?"#9333ea":OR,marginBottom:18}}>{(isEdit?"EDITAR ":"NUEVO ")+(esVend?"VENDEDOR":"CLIENTE")}</div>
         <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:"0 14px"}}>
           <Inp label="NOMBRE *" value={form.nombre} onChange={e=>upd("nombre",e.target.value)}/>
           <Inp label="EMPRESA" value={form.empresa||""} onChange={e=>upd("empresa",e.target.value)}/>
@@ -1707,6 +1710,64 @@ function Portal(){
       <span style={{background:"#fff",color:OR,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{cart.length}</span>
     </button>
   );
+
+  // Una sola pieza para pintar un grupo de usuarios: se usa dos veces,
+  // una para el equipo interno y otra para los clientes. Antes era una
+  // sola lista revuelta y había que ir leyendo badge por badge para
+  // saber quién era vendedor.
+  const BloqueUsuarios=({titulo,nota,lista,acento})=>(
+    <div style={{marginBottom:22}}>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,padding:"0 2px 8px",borderBottom:"2px solid "+acento,marginBottom:12,flexWrap:"wrap"}}>
+        <span style={{fontWeight:800,fontSize:12,letterSpacing:1,color:acento}}>{titulo}</span>
+        <span style={{color:GRL,fontSize:11}}>{lista.length}</span>
+        {nota&&<span style={{color:GRL,fontSize:11,marginLeft:"auto"}}>{nota}</span>}
+      </div>
+      {lista.length===0&&<div style={{color:GRL,fontSize:12,padding:"6px 2px 14px"}}>Todavía no hay nadie en este grupo.</div>}
+      {lista.length>0&&(mob?(
+        <div>{lista.map(u=><div key={u.id} style={{background:isAdminRole(u)?"#eff6ff":CD,border:"1px solid "+(isAdminRole(u)?"#bfdbfe":BD),borderRadius:8,padding:14,marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</div>
+              {u.empresa&&<div style={{color:GRL,fontSize:11}}>{u.empresa}</div>}
+            </div>
+            <Badge val={u.estatus}/>
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}><Badge val={isAdminRole(u)?u.rol:u.lista}/><span style={{color:GRL,fontSize:11,fontFamily:"monospace"}}>@{u.usuario}</span></div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {!isAdminRole(u)&&<Btn sm onClick={()=>setModal({mode:"edit",data:{...u}})}>EDITAR</Btn>}
+            {!isAdminRole(u)&&<Btn sm ghost onClick={()=>toggleEstatus(u.id,u.estatus)}>{u.estatus==="activo"?"DESACTIVAR":"ACTIVAR"}</Btn>}
+            {u.id!==session?.id&&<Btn sm danger onClick={()=>deleteClient(u.id,u.nombre,u.rol)}>ELIMINAR</Btn>}
+          </div>
+        </div>)}</div>
+      ):(
+        <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,background:"#fff"}}>
+            <thead><tr style={{background:DK}}>{["NOMBRE","EMPRESA","USUARIO","CONTRASEÑA","ROL","LISTA","ESTATUS","ACCIONES"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:1}}>{h}</th>)}</tr></thead>
+            <tbody>{lista.map((u,i)=><tr key={u.id} style={{borderTop:"1px solid "+BD,background:isAdminRole(u)?"#eff6ff":i%2?"#FAFAFA":"#fff"}}>
+              <td style={{padding:"9px 14px",fontWeight:600}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</td>
+              <td style={{padding:"9px 14px",color:GRL,fontSize:11}}>{u.empresa||"—"}</td>
+              <td style={{padding:"9px 14px",fontFamily:"monospace",color:GRL,fontSize:11}}>{u.usuario}</td>
+              <td style={{padding:"9px 14px"}}><PassCell/></td>
+              <td style={{padding:"9px 14px"}}><Badge val={u.rol}/></td>
+              <td style={{padding:"9px 14px"}}>{isAdminRole(u)?<span style={{color:GRL,fontSize:11}}>—</span>:<Badge val={u.lista}/>}</td>
+              <td style={{padding:"9px 14px"}}><Badge val={u.estatus}/></td>
+              <td style={{padding:"9px 14px"}}><div style={{display:"flex",gap:6}}>
+                {!isAdminRole(u)&&<Btn sm onClick={()=>setModal({mode:"edit",data:{...u}})}>EDITAR</Btn>}
+                {!isAdminRole(u)&&<Btn sm ghost onClick={()=>toggleEstatus(u.id,u.estatus)}>{u.estatus==="activo"?"DESACTIVAR":"ACTIVAR"}</Btn>}
+                {u.id!==session?.id&&<Btn sm danger onClick={()=>deleteClient(u.id,u.nombre,u.rol)}>ELIMINAR</Btn>}
+              </div></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Vendedor = usuario con lista VENDEDOR. isVendedor() ya mete ahí a
+  // los administradores, que también ven las tres listas.
+  const porNombre = (a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es");
+  const equipo   = users.filter(u=>isVendedor(u)).sort(porNombre);
+  const clientes = users.filter(u=>!isVendedor(u)).sort(porNombre);
 
   const TabBar=({items})=>(
     <div style={{background:CD,display:"flex",borderBottom:"1px solid "+BD,padding:mob?"0 8px":"0 24px",overflowX:"auto",scrollbarWidth:"none",
@@ -1839,50 +1900,22 @@ function Portal(){
         </div>}
 
         {tab==="clients"&&<div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-            <div><span style={{color:GRL,fontSize:11}}>{users.length} usuarios registrados</span>{userLoad&&<span style={{color:OR,fontSize:11,marginLeft:8}}>cargando...</span>}</div>
-            <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,gap:8,flexWrap:"wrap"}}>
+            <div>
+              <span style={{color:GRL,fontSize:11}}>{equipo.length} del equipo · {clientes.length} clientes</span>
+              {userLoad&&<span style={{color:OR,fontSize:11,marginLeft:8}}>cargando...</span>}
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button onClick={loadUsers} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ RECARGAR</button>
+              <Btn ghost onClick={()=>setModal({mode:"create",data:{lista:"VENDEDOR"}})}>+ VENDEDOR</Btn>
               <Btn onClick={()=>setModal({mode:"create",data:{}})}>+ NUEVO CLIENTE</Btn>
             </div>
           </div>
-          {mob?(
-            <div>{users.map(u=><div key={u.id} style={{background:isAdminRole(u)?"#eff6ff":CD,border:"1px solid "+(isAdminRole(u)?"#bfdbfe":BD),borderRadius:8,padding:14,marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <div>
-                  <div style={{fontWeight:700,fontSize:13}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</div>
-                  {u.empresa&&<div style={{color:GRL,fontSize:11}}>{u.empresa}</div>}
-                </div>
-                <Badge val={u.estatus}/>
-              </div>
-              <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}><Badge val={isAdminRole(u)?u.rol:u.lista}/><span style={{color:GRL,fontSize:11,fontFamily:"monospace"}}>@{u.usuario}</span></div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {!isAdminRole(u)&&<Btn sm onClick={()=>setModal({mode:"edit",data:{...u}})}>EDITAR</Btn>}
-                {!isAdminRole(u)&&<Btn sm ghost onClick={()=>toggleEstatus(u.id,u.estatus)}>{u.estatus==="activo"?"DESACTIVAR":"ACTIVAR"}</Btn>}
-                {u.id!==session?.id&&<Btn sm danger onClick={()=>deleteClient(u.id,u.nombre,u.rol)}>ELIMINAR</Btn>}
-              </div>
-            </div>)}</div>
-          ):(
-            <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,background:"#fff"}}>
-                <thead><tr style={{background:DK}}>{["NOMBRE","EMPRESA","USUARIO","CONTRASEÑA","ROL","LISTA","ESTATUS","ACCIONES"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:1}}>{h}</th>)}</tr></thead>
-                <tbody>{users.map((u,i)=><tr key={u.id} style={{borderTop:"1px solid "+BD,background:isAdminRole(u)?"#eff6ff":i%2?"#FAFAFA":"#fff"}}>
-                  <td style={{padding:"9px 14px",fontWeight:600}}>{u.nombre}{isAdminRole(u)&&<span style={{marginLeft:6,fontSize:9,background:"#dbeafe",color:"#2563eb",padding:"1px 6px",borderRadius:3,fontWeight:700}}>ADMIN</span>}</td>
-                  <td style={{padding:"9px 14px",color:GRL,fontSize:11}}>{u.empresa||"—"}</td>
-                  <td style={{padding:"9px 14px",fontFamily:"monospace",color:GRL,fontSize:11}}>{u.usuario}</td>
-                  <td style={{padding:"9px 14px"}}><PassCell/></td>
-                  <td style={{padding:"9px 14px"}}><Badge val={u.rol}/></td>
-                  <td style={{padding:"9px 14px"}}>{isAdminRole(u)?<span style={{color:GRL,fontSize:11}}>—</span>:<Badge val={u.lista}/>}</td>
-                  <td style={{padding:"9px 14px"}}><Badge val={u.estatus}/></td>
-                  <td style={{padding:"9px 14px"}}><div style={{display:"flex",gap:6}}>
-                    {!isAdminRole(u)&&<Btn sm onClick={()=>setModal({mode:"edit",data:{...u}})}>EDITAR</Btn>}
-                    {!isAdminRole(u)&&<Btn sm ghost onClick={()=>toggleEstatus(u.id,u.estatus)}>{u.estatus==="activo"?"DESACTIVAR":"ACTIVAR"}</Btn>}
-                    {u.id!==session?.id&&<Btn sm danger onClick={()=>deleteClient(u.id,u.nombre,u.rol)}>ELIMINAR</Btn>}
-                  </div></td>
-                </tr>)}</tbody>
-              </table>
-            </div>
-          )}
+
+          <BloqueUsuarios titulo="EQUIPO INTERNO" acento="#9333ea"
+            nota="Ven las tres listas de precios" lista={equipo}/>
+          <BloqueUsuarios titulo="CLIENTES" acento={OR}
+            nota="Cada uno ve solo la lista que tenga asignada" lista={clientes}/>
         </div>}
 
         {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
@@ -1904,7 +1937,8 @@ function Portal(){
               <div>Sesión: <strong style={{color:"#1a1a1a"}}>{session?.nombre}</strong></div>
               <div>Productos en catálogo: <strong style={{color:"#1a1a1a"}}>{products.length}</strong></div>
               <div>Marcas: <strong style={{color:"#1a1a1a"}}>{marcas.length}</strong></div>
-              <div>Clientes: <strong style={{color:"#1a1a1a"}}>{users.filter(u=>u.estatus==="activo").length} activos · {users.filter(u=>u.estatus==="inactivo").length} inactivos</strong></div>
+              <div>Equipo interno: <strong style={{color:"#1a1a1a"}}>{equipo.length}</strong></div>
+              <div>Clientes: <strong style={{color:"#1a1a1a"}}>{clientes.filter(u=>u.estatus==="activo").length} activos · {clientes.filter(u=>u.estatus==="inactivo").length} inactivos</strong></div>
             </div>
             <div style={{marginTop:16,display:"flex",gap:8,flexWrap:"wrap"}}>
               <button onClick={loadProducts} style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"9px 16px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>↻ Recargar catálogo</button>
