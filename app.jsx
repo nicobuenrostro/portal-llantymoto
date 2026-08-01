@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, Component } from "react";
 import { initializeApp, deleteApp } from "firebase/app";
 import {
   getFirestore, collection, getDocs, doc, setDoc,
@@ -102,6 +102,9 @@ const db = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 // Firebase exige mínimo 6 caracteres.
 const MIN_PASS = 6;
+// Sello de compilación. Aparece en el login y en el pie del panel.
+// Sirve para saber, sin adivinar, qué versión está publicada.
+const VERSION = "v1.0 · 31jul2026 · 21:30";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1240,7 +1243,60 @@ function CardProducto({p,vend,lista,onAdd}){
 // ══════════════════════════════════════════════════════════════
 // APP
 // ══════════════════════════════════════════════════════════════
-export default function App(){
+// ══════════════════════════════════════════════════════════════
+//  RED DE SEGURIDAD
+//  Si algo truena al pintar, React borra TODA la pantalla y deja el
+//  fondo en blanco, sin decir qué pasó. Esto lo atrapa y muestra el
+//  error en pantalla, con el componente y la línea. Nunca más un
+//  blanco mudo.
+// ══════════════════════════════════════════════════════════════
+class RedDeSeguridad extends Component {
+  constructor(p){ super(p); this.state={error:null,info:null}; }
+  static getDerivedStateFromError(error){ return {error}; }
+  componentDidCatch(error,info){ this.setState({info}); console.error("Fallo capturado:",error,info); }
+  render(){
+    if(!this.state.error) return this.props.children;
+    const e=this.state.error, info=this.state.info;
+    return (
+      <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",padding:24,
+                   display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{maxWidth:720,width:"100%",background:"#fff",border:"1px solid "+BD,
+                     borderRadius:10,padding:28,boxShadow:"0 8px 40px rgba(0,0,0,.10)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#dc2626",letterSpacing:1,marginBottom:6}}>
+            EL PORTAL NO PUDO ABRIR
+          </div>
+          <div style={{color:GRL,fontSize:12,marginBottom:18}}>
+            Manda esta pantalla completa para resolverlo. {VERSION}
+          </div>
+          <div style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,
+                       padding:"12px 14px",marginBottom:14}}>
+            <div style={{fontFamily:"monospace",fontSize:12,color:"#991b1b",wordBreak:"break-word"}}>
+              {String(e && (e.message||e))}
+            </div>
+          </div>
+          {info && info.componentStack &&
+            <details style={{marginBottom:16}}>
+              <summary style={{cursor:"pointer",fontSize:11,color:GRL,letterSpacing:1}}>DETALLE TÉCNICO</summary>
+              <pre style={{fontSize:10,color:GRL,background:"#fafafa",padding:12,borderRadius:6,
+                           overflowX:"auto",whiteSpace:"pre-wrap",marginTop:8,maxHeight:220}}>
+                {String(info.componentStack).trim().split("\n").slice(0,12).join("\n")}
+              </pre>
+            </details>}
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>location.reload()}
+              style={{background:OR,color:"#fff",border:"none",padding:"11px 20px",borderRadius:6,
+                      cursor:"pointer",fontWeight:800,fontSize:12,letterSpacing:1}}>REINTENTAR</button>
+            <button onClick={async()=>{ try{await signOut(auth);}catch(x){} location.reload(); }}
+              style={{background:"#fff",color:GRL,border:"1px solid "+BD,padding:"11px 20px",
+                      borderRadius:6,cursor:"pointer",fontWeight:700,fontSize:12}}>SALIR Y REINTENTAR</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
+function Portal(){
   const [session,setSession]=useState(null);
   const [view,setView]=useState("cargando");
   const [tab,setTab]=useState("products");
@@ -1581,7 +1637,8 @@ export default function App(){
           <span style={{color:GRL,fontSize:10,fontStyle:"italic"}}>{EMPRESA.eslogan}</span>
         </div>
         <div style={{padding:"26px 28px 24px"}}>
-          <div style={{color:GRL,fontSize:11,letterSpacing:3,textAlign:"center",marginBottom:20}}>PORTAL DE PRECIOS</div>
+          <div style={{color:GRL,fontSize:11,letterSpacing:3,textAlign:"center",marginBottom:4}}>PORTAL DE PRECIOS</div>
+          <div style={{color:"#c8c8c8",fontSize:9,textAlign:"center",marginBottom:16}}>{VERSION}</div>
           <Inp label="USUARIO" value={lu} onChange={e=>setLu(e.target.value)}/>
           <div style={{marginBottom:20}}>
             <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>CONTRASEÑA</div>
@@ -1824,4 +1881,8 @@ export default function App(){
       </div>
     </div>
   );
+}
+
+export default function App(){
+  return <RedDeSeguridad><Portal/></RedDeSeguridad>;
 }
