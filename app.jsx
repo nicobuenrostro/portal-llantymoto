@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, Component } from "react";
+ import { useState, useEffect, useMemo, useRef, Component } from "react";
 import { initializeApp, deleteApp } from "firebase/app";
 import {
   getFirestore, collection, getDocs, doc, setDoc,
