@@ -131,7 +131,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v2.7 · orden marcas + tel real · 01ago2026";
+const VERSION = "v3.0 · reabrir cotización · 03ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -761,13 +761,13 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   const PCT=[4,13,13,38,8,12,12];
   const colW=PCT.map(p=>AW*p/100);
   const rows=sitems.map((it,i)=>[
-    i+1, safe(it.marca)||"—", safe(it.medida)||"—", safe(it.descripcion)||"—",
+    i+1, safe(it.marca)||"—", safe(it.codigo)||safe(it.medida)||"—", safe(it.descripcion)||"—",
     safeNum(it.cantidad), money2(it.precio), money2(safeNum(it.precio)*safeNum(it.cantidad)),
   ]);
 
   d.autoTable({
     startY:y,
-    head:[["#","MARCA","MEDIDA","DESCRIPCIÓN","CANT.","P. UNITARIO","IMPORTE"]],
+    head:[["#","MARCA","SKU","DESCRIPCIÓN","CANT.","P. UNITARIO","IMPORTE"]],
     body:rows,
     margin:{left:M,right:M,top:PDF.headerCont+6,bottom:PDF.H-PDF.limite},
     tableWidth:AW,
@@ -778,7 +778,7 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
     columnStyles:{
       0:{cellWidth:colW[0],halign:"center"},
       1:{cellWidth:colW[1],halign:"left"},
-      2:{cellWidth:colW[2],halign:"left",fontStyle:"bold"},
+      2:{cellWidth:colW[2],halign:"left",fontStyle:"bold",fontSize:6.6},
       3:{cellWidth:colW[3],halign:"left"},
       4:{cellWidth:colW[4],halign:"center"},
       5:{cellWidth:colW[5],halign:"right"},
@@ -958,7 +958,7 @@ function CartPanel({cart,setCart,session,onClose}){
   const vend=isVendedor(session);
   const [nota,setNota]=useState("");
   const [vigencia,setVigencia]=useState("7 días naturales");
-  const [descuento,setDescuento]=useState(0);
+  const [descuento,setDescuento]=useState("");
   const [clienteNombre,setClienteNombre]=useState("");
   const [generating,setGenerating]=useState(false);
   const [folioMsg,setFolioMsg]=useState("");
@@ -1087,9 +1087,11 @@ function CartPanel({cart,setCart,session,onClose}){
           {vend&&(
             <div style={{marginBottom:10}}>
               <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>DESCUENTO ADICIONAL % (0–30)</div>
-              <input type="number" min="0" max="30" step="1" value={descuento}
-                onChange={e=>setDescuento(clampDesc(e.target.value))}
+              <input type="text" inputMode="numeric" placeholder="0" value={descuento}
+                onChange={e=>setDescuento(e.target.value.replace(/\D/g,"").slice(0,2))}
+                onBlur={()=>setDescuento(v=>{const n=clampDesc(v);return v===""?"":String(n);})}
                 style={{width:"100%",padding:"9px 11px",border:"1px solid "+BD,borderRadius:6,fontSize:12,outline:"none",background:"#fff",boxSizing:"border-box"}}/>
+              {clampDesc(descuento)!==safeNum(descuento||0)&&<div style={{color:"#dc2626",fontSize:10,marginTop:3}}>El máximo permitido es 30%: se aplicará {clampDesc(descuento)}%.</div>}
             </div>
           )}
           <div style={{marginBottom:12}}>
@@ -1137,7 +1139,7 @@ function CartPanel({cart,setCart,session,onClose}){
 }
 
 // ── Historial ─────────────────────────────────────────────────
-function HistorialCotizaciones({session}){
+function HistorialCotizaciones({session,onReabrir}){
   const [cots,setCots]=useState([]);
   const [loading,setLoading]=useState(true);
   const [expanded,setExpanded]=useState(null);
@@ -1198,6 +1200,9 @@ function HistorialCotizaciones({session}){
                 </div>
               </div>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                {onReabrir&&<button onClick={e=>{e.stopPropagation();onReabrir(cot);}}
+                  title="Carga las partidas al carrito para modificarlas y generar una cotización nueva"
+                  style={{background:"#fff",color:OR,border:"1.5px solid "+OR,padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>REABRIR</button>}
                 <button onClick={e=>{e.stopPropagation();reimprimir(cot);}}
                   style={{background:OR,color:"#fff",border:"none",padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>PDF</button>
                 <span style={{color:GRL,fontSize:16,transform:open?"rotate(180deg)":"none",transition:"transform .2s"}}>▾</span>
@@ -1712,6 +1717,29 @@ function Portal(){
     });
   },[products,ds,marca]);
 
+  // Reabrir una cotización del historial: sus partidas pasan al
+  // carrito tal cual se cotizaron (precio original respetado, decisión
+  // de Nicolás) para quitar, agregar o cambiar cantidades. Al generar,
+  // sale con FOLIO NUEVO; la original no se toca ni se borra.
+  function reabrirCotizacion(cot){
+    const items=(cot.items||[]).map(it=>({
+      marca:safe(it.marca),medida:safe(it.medida),
+      codigo:safe(it.codigo),descripcion:safe(it.descripcion),
+      precio:safeNum(it.precio),
+      tipoPrecio:safe(it.tipoPrecio)||"publico",
+      cantidad:Math.max(1,safeNum(it.cantidad)),
+      // sin _publico/_distribuidor/_asociado: el selector de lista se
+      // queda con el precio cotizado, que es la regla acordada.
+      _publico:safeNum(it._publico)||safeNum(it.precio),
+      _distribuidor:safeNum(it._distribuidor)||safeNum(it.precio),
+      _asociado:safeNum(it._asociado)||safeNum(it.precio),
+    }));
+    if(items.length===0){alert("Esta cotización no tiene partidas guardadas.");return;}
+    setCart(items);
+    setCartOpen(true);
+    setTab("products");
+  }
+
   function addToCart(p){
     const lista=safe(session?.lista).toUpperCase();
     const vend=isVendedor(session);
@@ -2211,7 +2239,7 @@ function Portal(){
             vacio="Todavía no hay clientes dados de alta."/>
         </div>}
 
-        {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
+        {tab==="quotes"&&<HistorialCotizaciones session={session} onReabrir={reabrirCotizacion}/>}
         {tab==="arribos"&&<ProximosArribos session={session} mob={mob}/>}
 
         {tab==="optimizador"&&PanelOptimizador}
@@ -2339,7 +2367,7 @@ function Portal(){
           {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </>}
 
-        {tab==="quotes"&&<HistorialCotizaciones session={session}/>}
+        {tab==="quotes"&&<HistorialCotizaciones session={session} onReabrir={reabrirCotizacion}/>}
         {tab==="arribos"&&vend&&<ProximosArribos session={session} mob={mob}/>}
 
         {/* vend blinda la pestaña: un cliente nunca la ve ni la abre. */}
