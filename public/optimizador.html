@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Llantymoto — Optimizador de Paquetes</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+// Loader con respaldo multi-CDN: si un CDN falla o desaparece, se intenta el siguiente.
+function cargarScript(urls){return new Promise((res,rej)=>{
+  const [u,...resto]=urls;
+  if(!u)return rej(new Error('Todos los CDN fallaron'));
+  const s=document.createElement('script');s.src=u;
+  s.onload=()=>res(u);s.onerror=()=>cargarScript(resto).then(res,rej);
+  document.head.appendChild(s);
+});}
+const CDN_PDFJS=[
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+  'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'];
+const CDN_PDFJS_WORKER=[
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js',
+  'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'];
+const CDN_TESS=[
+  'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js',
+  'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+  'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js'];
+let _pdfjsReady=cargarScript(CDN_PDFJS).then(async u=>{
+  for(const w of CDN_PDFJS_WORKER){try{const r=await fetch(w,{method:'HEAD'});if(r.ok){pdfjsLib.GlobalWorkerOptions.workerSrc=w;return;}}catch(e){}}
+  pdfjsLib.GlobalWorkerOptions.workerSrc=CDN_PDFJS_WORKER[0];
+}).catch(()=>{window._pdfjsFallo=true;});
+</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a18;font-size:14px;line-height:1.5}
+.topbar{background:#FF5C1E;border-bottom:none;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10;box-shadow:0 2px 6px rgba(214,65,10,.35)}
+.topbar-title{font-size:16px;font-weight:800;font-style:italic;letter-spacing:.04em;color:#fff}.topbar-title .lm-moto{color:#FFD9C6}
+.topbar-sub{font-size:12px;color:rgba(255,255,255,.85)}
+.main{max-width:920px;margin:0 auto;padding:16px}
+/* TABS */
+.tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid #e0ddd6}
+.tab{padding:9px 18px;font-size:13px;border:none;background:transparent;cursor:pointer;color:#888;font-family:inherit;border-bottom:2px solid transparent;margin-bottom:-1px;display:flex;align-items:center;gap:6px}
+.tab:hover{color:#1a1a18}
+.tab.active{color:#FF5C1E;border-bottom-color:#FF5C1E;font-weight:500}
+.tab.disabled{opacity:.35;cursor:not-allowed}
+.tab-num{font-size:11px;background:#e0ddd6;color:#888;border-radius:10px;padding:1px 7px;font-weight:500}
+.tab.active .tab-num{background:#FFEDE4;color:#B23A08}
+/* CARDS */
+.card{background:#fff;border:1px solid #e0ddd6;border-radius:12px;padding:16px 20px;margin-bottom:12px}
+.section-label{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#888;margin-bottom:10px}
+/* INPUTS */
+input[type=number],input[type=text],select,textarea{height:34px;padding:0 10px;font-size:13px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#1a1a18;font-family:inherit;outline:none;width:100%}
+textarea{height:60px;padding:8px 10px;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:#FF5C1E;box-shadow:0 0 0 2px #FFEDE4}
+input[type=checkbox]{width:16px;height:16px;accent-color:#FF5C1E;flex-shrink:0}
+/* BUTTONS */
+.btn{height:34px;padding:0 16px;font-size:13px;cursor:pointer;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a18;display:inline-flex;align-items:center;gap:6px;font-family:inherit;white-space:nowrap}
+.btn:hover{background:#f0f0ee}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:#FF5C1E;border-color:#FF5C1E;color:#fff;font-weight:500}
+.btn-primary:hover{background:#D94A0F}
+.btn-secondary{background:#f5f5f3;border-color:#ddd}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.btn-icon{width:28px;height:28px;padding:0;justify-content:center;color:#c44;border-color:#f5c0c0}
+.btn-icon:hover{background:#fff0f0}
+.btn-green-outline{border-color:#FF5C1E;color:#FF5C1E}
+.btn-green-outline:hover{background:#FFEDE4}
+/* PEDIDO ROWS */
+.pedido-header{display:grid;grid-template-columns:28px 2fr .75fr 1.5fr .65fr .65fr 28px;gap:5px;align-items:center;font-size:11px;color:#888;font-weight:600;padding:2px 8px;margin-bottom:4px}
+.pedido-row{display:grid;grid-template-columns:28px 2fr .75fr 1.5fr .65fr .65fr 28px;gap:5px;align-items:center;padding:5px 8px;border-radius:8px;border:1px solid #e8e5de;margin-bottom:4px;background:#fff}
+.pedido-row:hover{border-color:#bbb}
+.rnum{font-size:11px;color:#bbb;text-align:center}
+.dbadge{font-size:11px;background:#f5f5f3;border-radius:4px;padding:3px 6px;color:#666;text-align:center;white-space:nowrap}
+.wbadge{font-size:12px;text-align:center;color:#555}
+/* METRICS */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:14px}
+.metric{background:#f5f5f3;border-radius:8px;padding:10px 14px}
+.metric-label{font-size:11px;color:#888;margin-bottom:3px}
+.metric-val{font-size:20px;font-weight:600}
+.metric-sub{font-size:11px;color:#aaa;margin-top:2px}
+.metric-best{background:#FFEDE4}.metric-best .metric-val{color:#D94A0F}
+/* PACKAGES */
+.pkt-wrap{margin-bottom:8px;border:1px solid #e0ddd6;border-radius:10px;overflow:hidden}
+.pkt-head{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#f9f9f7;border-bottom:1px solid #e8e5de}
+.pkt-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.pkt-body{padding:10px 14px}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.chip{font-size:11px;padding:3px 8px;border-radius:10px;border:1px solid #e0ddd6;background:#f5f5f3}
+.dims-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.dim{text-align:center}
+.dim-lbl{font-size:10px;color:#aaa}
+.dim-val{font-size:12px;font-weight:600}
+/* PILLS */
+.pill{font-size:11px;padding:2px 9px;border-radius:10px;font-weight:600}
+.pt1,.pt2{background:#FFEDE4;color:#B23A08}
+.pt3,.pt4{background:#E6F1FB;color:#0C447C}
+.pt5,.pt6{background:#FAEEDA;color:#633806}
+.pt7{background:#FCEBEB;color:#791F1F}
+/* ALERTS */
+.alert{border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px}
+.alert-warn{background:#FAEEDA;border:1px solid #EF9F27;color:#633806}
+.alert-ok{background:#FFEDE4;border:1px solid #5DCAA5;color:#B23A08}
+.alert-info{background:#E6F1FB;border:1px solid #85B7EB;color:#0C447C}
+/* TABLES */
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{font-size:11px;font-weight:600;color:#888;padding:5px 8px;border-bottom:1px solid #e8e5de;text-align:left;background:#f9f9f7}
+.tbl td{padding:6px 8px;border-bottom:1px solid #eee;vertical-align:middle}
+.tbl .r{text-align:right}
+.tbl .total-row td{font-weight:600;border-top:1px solid #ddd;border-bottom:none}
+/* ENVIO FORM */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:12px;color:#555;font-weight:500}
+/* PACKING PREVIEW */
+.pl-card{background:#fff;border:1px solid #e0ddd6;border-radius:10px;overflow:hidden;margin-bottom:8px}
+.pl-pkt-head{background:#f9f9f7;border-bottom:1px solid #eee;padding:8px 14px;display:flex;justify-content:space-between;align-items:center}
+.pl-pkt-body{padding:8px 14px}
+.pl-row{display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px dotted #eee}
+.pl-row:last-child{border-bottom:none}
+/* UPLOAD AREA */
+.upload-area{border:2px dashed #ddd;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:.2s;background:#fafaf8}
+.upload-area:hover{border-color:#FF5C1E;background:#FFEDE4}
+/* PREVIEW TABLE */
+.preview-row{display:grid;grid-template-columns:2fr 1fr 1fr 80px;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid #eee;font-size:13px}
+.preview-row.header{font-size:11px;color:#888;font-weight:600;background:#f9f9f7;border-radius:6px 6px 0 0}
+.match-yes{color:#D94A0F;font-size:11px}
+.match-no{color:#c44;font-size:11px}
+hr.div{border:none;border-top:1px solid #e8e5de;margin:14px 0}
+/* GUIDE INPUTS */
+.guide-row{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #eee}
+.guide-row:last-child{border-bottom:none}
+.guide-label{font-size:12px;font-weight:500;white-space:nowrap}
+/* SPIN */
+.spin{animation:spin .7s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* KM DESTINOS */
+.dest-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;margin-top:8px}
+.dest-btn{padding:6px 10px;font-size:12px;border:1px solid #e0ddd6;border-radius:8px;background:#fff;cursor:pointer;text-align:left;transition:.15s}
+.dest-btn:hover{border-color:#FF5C1E;background:#FFEDE4;color:#B23A08}
+.dest-btn .dest-name{font-weight:600;display:block}
+.dest-btn .dest-km{font-size:11px;color:#888}
+/* VERIFICACION */
+.verif-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 7px;border-radius:8px;font-weight:600}
+.verif-ok{background:#FFEDE4;color:#B23A08}
+.verif-warn{background:#FAEEDA;color:#633806}
+@media(max-width:600px){
+  .pedido-header,.pedido-row{grid-template-columns:24px 1fr 55px 28px}
+  .pedido-header span:nth-child(4),.pedido-row .dbadge,
+  .pedido-header span:nth-child(5),.pedido-row .wbadge:first-of-type,
+  .pedido-header span:nth-child(6),.pedido-row .wbadge:last-of-type{display:none}
+  .dims-grid{grid-template-columns:repeat(3,1fr)}
+  .form-grid,.form-grid-3{grid-template-columns:1fr}
+  .dest-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <img src="data:image/png;base64,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" alt="Llantymoto" style="height:40px;width:auto;display:block">
+  <div>
+    <div class="topbar-title">LLANTY<span class="lm-moto">MOTO</span> · Optimizador de Paquetes</div>
+    <div class="topbar-sub">Paquetexpress · v11.9 — Mousses con medida en guiones (140-80-18) ya se reconocen</div>
+  </div>
+</div>
+</div>
+<div class="main"><div id="root"></div></div>
+
+<script>
+// ─── CATÁLOGO DE LLANTAS ────────────────────────────────────────────────────
+const CAT=[
+{m:"60/100-12",l:43,a:6,p:2.7},{m:"60/100-14",l:48,a:6,p:2.8},{m:"60/100-17",l:56,a:6,p:3.1},
+{m:"70/100-17",l:58,a:7,p:3.5},{m:"70/100-19",l:63,a:7,p:3.7},
+{m:"80/100-12",l:47,a:8,p:3.3},{m:"80/100-14",l:52,a:8,p:3.5},{m:"80/100-17",l:60,a:8,p:3.9},{m:"80/100-18",l:62,a:8,p:4.0},{m:"80/100-21",l:70,a:8,p:4.3},
+{m:"80/90-14",l:50,a:8,p:3.4},{m:"80/90-17",l:58,a:8,p:3.8},{m:"80/90-21",l:68,a:8,p:4.2},
+{m:"90/100-10",l:44,a:9,p:3.4},{m:"90/100-14",l:54,a:9,p:3.9},{m:"90/100-16",l:59,a:9,p:4.2},{m:"90/100-21",l:72,a:9,p:4.8},
+{m:"90/80-17",l:58,a:9,p:4.1},{m:"90/90-10",l:42,a:9,p:3.3},{m:"90/90-12",l:47,a:9,p:3.6},
+{m:"90/90-14",l:52,a:9,p:3.8},{m:"90/90-17",l:60,a:9,p:4.2},{m:"90/90-18",l:62,a:9,p:4.3},{m:"90/90-19",l:65,a:9,p:4.5},{m:"90/90-21",l:70,a:9,p:4.7},{m:"90/90B21",l:70,a:9,p:4.7},
+{m:"100/70-14",l:50,a:10,p:4.0},{m:"100/80-14",l:52,a:10,p:4.1},{m:"100/80-16",l:57,a:10,p:4.4},{m:"100/80-17",l:60,a:10,p:4.5},
+{m:"100/90-10",l:44,a:10,p:3.7},{m:"100/90-12",l:49,a:10,p:3.9},{m:"100/90-14",l:54,a:10,p:4.2},{m:"100/90-17",l:62,a:10,p:4.7},{m:"100/90-18",l:64,a:10,p:4.8},{m:"100/90-19",l:67,a:10,p:4.9},{m:"100/90B19",l:67,a:10,p:4.9},{m:"100/100-18",l:66,a:10,p:4.9},
+{m:"110/70-11",l:44,a:11,p:3.9},{m:"110/70-12",l:46,a:11,p:4.0},{m:"110/70-13",l:49,a:11,p:4.2},{m:"110/70-16",l:57,a:11,p:4.7},
+{m:"110/70-17",l:59,a:11,p:4.8},{m:"110/70R17",l:59,a:11,p:4.8},{m:"110/70ZR17",l:59,a:11,p:4.8},
+{m:"110/80-14",l:54,a:11,p:4.5},{m:"110/80-17",l:61,a:11,p:4.9},{m:"110/80-18",l:64,a:11,p:5.1},{m:"110/80-19",l:66,a:11,p:5.2},{m:"110/80R19",l:66,a:11,p:5.2},{m:"110/80B19",l:66,a:11,p:5.2},
+{m:"110/90-12",l:51,a:11,p:4.3},{m:"110/90-13",l:53,a:11,p:4.5},{m:"110/90-16",l:61,a:11,p:4.9},{m:"110/90-17",l:63,a:11,p:5.1},{m:"110/90-18",l:66,a:11,p:5.2},{m:"110/90-19",l:69,a:11,p:5.4},{m:"110/100-18",l:68,a:11,p:5.4},
+{m:"120/65ZR17",l:59,a:12,p:5.1},{m:"120/70-10",l:43,a:12,p:4.1},{m:"120/70-12",l:48,a:12,p:4.4},{m:"120/70-13",l:50,a:12,p:4.5},{m:"120/70-14",l:53,a:12,p:4.7},{m:"120/70-15",l:55,a:12,p:4.9},{m:"120/70R15",l:55,a:12,p:4.9},
+{m:"120/70-17",l:60,a:12,p:5.2},{m:"120/70R17",l:60,a:12,p:5.2},{m:"120/70ZR17",l:60,a:12,p:5.2},{m:"120/70-19",l:66,a:12,p:5.6},{m:"120/70R19",l:66,a:12,p:5.6},{m:"120/70B19",l:66,a:12,p:5.6},{m:"120/70ZR19",l:66,a:12,p:5.6},
+{m:"120/80-12",l:50,a:12,p:4.5},{m:"120/80-14",l:55,a:12,p:4.9},{m:"120/80-16",l:60,a:12,p:5.2},{m:"120/80-17",l:63,a:12,p:5.4},{m:"120/80-18",l:65,a:12,p:5.5},{m:"120/80-19",l:68,a:12,p:5.7},
+{m:"120/90-10",l:47,a:12,p:4.4},{m:"120/90-17",l:65,a:12,p:5.5},{m:"120/90-18",l:68,a:12,p:5.7},{m:"120/90-19",l:70,a:12,p:5.9},{m:"120/100-18",l:70,a:12,p:5.9},
+{m:"130/60-13",l:49,a:13,p:4.8},{m:"130/60B19",l:64,a:13,p:5.8},
+{m:"130/70-10",l:44,a:13,p:4.4},{m:"130/70-12",l:49,a:13,p:4.8},{m:"130/70-13",l:52,a:13,p:5.0},{m:"130/70-16",l:59,a:13,p:5.5},{m:"130/70-17",l:62,a:13,p:5.7},{m:"130/70-18",l:64,a:13,p:5.8},
+{m:"130/80-17",l:64,a:13,p:5.8},{m:"130/80B17",l:64,a:13,p:5.8},{m:"130/80R17",l:64,a:13,p:5.8},{m:"130/80B18",l:67,a:13,p:6.0},{m:"130/80-18",l:67,a:13,p:6.0},
+{m:"130/90-10",l:49,a:13,p:4.8},{m:"130/90-15",l:62,a:13,p:5.7},{m:"130/90B16",l:65,a:13,p:5.9},{m:"130/90-16",l:65,a:13,p:5.9},{m:"130/90-18",l:70,a:13,p:6.3},
+{m:"140/60-13",l:50,a:14,p:5.1},{m:"140/60-14",l:53,a:14,p:5.3},{m:"140/60-17",l:60,a:14,p:5.9},{m:"140/60R17",l:60,a:14,p:5.9},
+{m:"140/70-12",l:51,a:14,p:5.2},{m:"140/70-17",l:63,a:14,p:6.1},{m:"140/70R17",l:63,a:14,p:6.1},{m:"140/70ZR17",l:63,a:14,p:6.1},
+{m:"140/80-17",l:66,a:13,p:6.3},{m:"140/80B17",l:66,a:13,p:6.3},{m:"140/80R17",l:66,a:13,p:6.3},{m:"140/80-18",l:69,a:13,p:6.6},{m:"140/80B18",l:69,a:13,p:6.6},
+{m:"140/90-15",l:64,a:14,p:6.2},{m:"145/70-6",l:39,a:15,p:1.7},
+{m:"150/60-17",l:62,a:15,p:6.4},{m:"150/60R17",l:62,a:15,p:6.4},{m:"150/60ZR17",l:62,a:15,p:6.4},
+{m:"150/70-13",l:55,a:15,p:5.8},{m:"150/70-14",l:57,a:15,p:6.0},{m:"150/70-17",l:65,a:15,p:6.6},{m:"150/70R17",l:65,a:15,p:6.6},{m:"150/70B17",l:65,a:15,p:6.6},{m:"150/70-18",l:67,a:15,p:6.8},{m:"150/70R18",l:67,a:15,p:6.8},{m:"150/70B18",l:67,a:15,p:6.8},
+{m:"150/80B16",l:65,a:15,p:6.6},{m:"150/90B15",l:66,a:15,p:6.7},
+{m:"160/60-15",l:58,a:16,p:6.4},{m:"160/60R15",l:58,a:16,p:6.4},{m:"160/60R17",l:63,a:16,p:6.8},{m:"160/60ZR17",l:63,a:16,p:6.8},
+{m:"170/60-17",l:64,a:17,p:7.2},{m:"170/60R17",l:64,a:17,p:7.2},{m:"170/60B17",l:64,a:17,p:7.2},{m:"170/60ZR17",l:64,a:17,p:7.2},{m:"170/80B15",l:66,a:17,p:7.4},
+{m:"180/55R17",l:63,a:18,p:7.5},{m:"180/55ZR17",l:63,a:18,p:7.5},{m:"180/60ZR17",l:65,a:18,p:7.7},{m:"180/65B16",l:65,a:18,p:7.7},
+{m:"190/50R17",l:63,a:19,p:7.8},{m:"190/50ZR17",l:63,a:19,p:7.8},{m:"190/55R17",l:65,a:19,p:8.0},{m:"190/55ZR17",l:65,a:19,p:8.0},
+{m:"200/55ZR17",l:66,a:20,p:8.5},{m:"205/50-10",l:46,a:21,p:6.6},
+{m:"2.50-17",l:56,a:7,p:3.4},{m:"2.75-17",l:57,a:7,p:3.4},{m:"2.75-18",l:59,a:7,p:3.5},
+{m:"3.00-17",l:58,a:8,p:3.8},{m:"3.00-18",l:61,a:8,p:3.9},{m:"3.00-19",l:63,a:8,p:4.0},{m:"3.00-21",l:68,a:8,p:4.2},
+{m:"3.25-19",l:64,a:9,p:4.4},{m:"3.50-10",l:43,a:9,p:3.4},{m:"3.50-18",l:63,a:9,p:4.4},
+{m:"4.00-8",l:40,a:11,p:1.1},{m:"4.00-18",l:66,a:11,p:5.2},{m:"4.10-18",l:66,a:11,p:5.2},
+{m:"4.50-10",l:48,a:12,p:4.4},{m:"4.50-12",l:53,a:12,p:4.7},{m:"4.60-17",l:66,a:12,p:5.6},{m:"4.60-18",l:68,a:12,p:5.7},
+{m:"15X6.00-6",l:39,a:16,p:5.1,t:'ATV'},{m:"16X8-7",l:41,a:21,p:6.6,t:'ATV'},
+{m:"18X8.50-8",l:46,a:22,p:7.6,t:'ATV'},{m:"18X9.50-8",l:46,a:25,p:8.5,t:'ATV'},{m:"18X10-8",l:46,a:26,p:8.8,t:'ATV'},
+{m:"19X6-10",l:49,a:16,p:6.1,t:'ATV'},{m:"19X7.00-8",l:49,a:18,p:6.8,t:'ATV'},
+{m:"20X6-10",l:51,a:16,p:6.4,t:'ATV'},{m:"20X9.50-8",l:51,a:25,p:9.3,t:'ATV'},{m:"20X10-10",l:51,a:26,p:9.7,t:'ATV'},{m:"20X11-8",l:51,a:28,p:10.3,t:'ATV'},{m:"20X11-9",l:51,a:28,p:10.3,t:'ATV'},{m:"20X11-10",l:51,a:28,p:10.3,t:'ATV'},
+{m:"21X7-10",l:54,a:18,p:7.4,t:'ATV'},{m:"21X7.00-8",l:54,a:18,p:7.4,t:'ATV'},
+{m:"22X7-10",l:56,a:18,p:7.6,t:'ATV'},{m:"22X7-11",l:56,a:18,p:7.6,t:'ATV'},{m:"22X8-10",l:56,a:21,p:8.7,t:'ATV'},{m:"22X10-9",l:56,a:26,p:10.5,t:'ATV'},{m:"22X10-10",l:56,a:26,p:10.5,t:'ATV'},{m:"22X11-8",l:56,a:28,p:11.2,t:'ATV'},{m:"22X11-9",l:56,a:28,p:11.2,t:'ATV'},{m:"22X11-10",l:56,a:28,p:11.2,t:'ATV'},
+{m:"23X7-10",l:59,a:18,p:8.0,t:'ATV'},{m:"23X8-11",l:59,a:21,p:9.1,t:'ATV'},{m:"23X8.50-12",l:59,a:22,p:9.5,t:'ATV'},{m:"23X10.00-14",l:59,a:26,p:11.0,t:'ATV'},{m:"23X10.50-12",l:59,a:27,p:11.4,t:'ATV'},{m:"23X10.50-14",l:59,a:27,p:11.4,t:'ATV'},
+{m:"24X8-11",l:61,a:21,p:9.4,t:'ATV'},{m:"24X8-12",l:61,a:21,p:9.4,t:'ATV'},{m:"24X9-11",l:61,a:23,p:10.2,t:'ATV'},{m:"24X10-11",l:61,a:26,p:11.4,t:'ATV'},{m:"24X11-10",l:61,a:28,p:12.2,t:'ATV'},
+{m:"25X8-12",l:64,a:21,p:9.8,t:'ATV'},{m:"25X10-12",l:64,a:26,p:11.9,t:'ATV'},{m:"25X12-9",l:64,a:31,p:13.9,t:'ATV'},{m:"25X12-10",l:64,a:31,p:13.9,t:'ATV'},
+{m:"26X9-12",l:67,a:23,p:11.1,t:'ATV'},{m:"26X9-14",l:67,a:23,p:11.1,t:'ATV'},{m:"26X11-12",l:67,a:28,p:13.2,t:'ATV'},{m:"26X11-14",l:67,a:28,p:13.2,t:'ATV'},
+{m:"27X9-12",l:69,a:23,p:11.4,t:'ATV'},{m:"27X9R12",l:69,a:23,p:11.4,t:'ATV'},{m:"27X9-14",l:69,a:23,p:11.4,t:'ATV'},{m:"27X9R14",l:69,a:23,p:11.4,t:'ATV'},{m:"27X11-12",l:69,a:28,p:13.6,t:'ATV'},{m:"27X11R12",l:69,a:28,p:13.6,t:'ATV'},{m:"27X11-14",l:69,a:28,p:13.6,t:'ATV'},{m:"27X11R14",l:69,a:28,p:13.6,t:'ATV'},
+{m:"28X8-12",l:72,a:21,p:10.9,t:'ATV'},{m:"28X10-12",l:72,a:26,p:13.2,t:'ATV'},{m:"28X10R14",l:72,a:26,p:13.2,t:'ATV'},{m:"28X10.00R14",l:72,a:26,p:13.2,t:'ATV'},
+{m:"29X9-14",l:74,a:23,p:12.1,t:'ATV'},{m:"29X9.00R14",l:74,a:23,p:12.1,t:'ATV'},{m:"29X11-14",l:74,a:28,p:14.5,t:'ATV'},{m:"29X11.00R14",l:74,a:28,p:14.5,t:'ATV'},
+{m:"30X10-14",l:77,a:26,p:14.1,t:'ATV'},{m:"30X10R14",l:77,a:26,p:14.1,t:'ATV'},
+{m:"32X10R14",l:82,a:26,p:16.4,t:'ATV'},{m:"32X10R15",l:82,a:26,p:16.4,t:'ATV'},{m:"32X10R16",l:82,a:26,p:16.4,t:'ATV'},
+{m:"33X9.50R15",l:84,a:25,p:16.2,t:'ATV'},{m:"33X10R15",l:84,a:26,p:16.8,t:'ATV'},
+{m:"34X10R14",l:87,a:26,p:17.3,t:'ATV'},{m:"34X10R15",l:87,a:26,p:17.3,t:'ATV'},{m:"34X10R16",l:87,a:26,p:17.3,t:'ATV'},
+{m:"35X10R15",l:89,a:26,p:17.7,t:'ATV'},{m:"35X10R16",l:89,a:26,p:17.7,t:'ATV'},
+{m:"37X10R15",l:94,a:26,p:18.6,t:'ATV'},
+// ── MOUSSES (CAJAS) ──────────────────────────────────────────────────────
+// Cajas rígidas: l = LARGO = ANCHO (base cuadrada), a = ALTO de caja, p = peso.
+// SIN compresión. Se apilan (alto = Σ altos, base = la mayor de la pila).
+// NUNCA se mezclan con llantas en el mismo paquete (evitar daño a cajas).
+// Fuente: catálogo maestro PORTMOU (2026-07).
+{m:"MOUSSE 120/90-18", l:64,a:10,  p:2.0,t:'MOUSSE'},  // PORTMOU1209018
+{m:"MOUSSE 110/100-18",l:64,a:10,  p:1.9,t:'MOUSSE'},  // PORTMOU11010018
+{m:"MOUSSE 140/80-18", l:64,a:11.5,p:3.5,t:'MOUSSE'},  // PORTMOU1408018
+{m:"MOUSSE 90/90-21",  l:66,a:8.5, p:2.2,t:'MOUSSE'},  // PORTMOU909021
+{m:"MOUSSE 90/100-21", l:66,a:8.5, p:2.6,t:'MOUSSE'},  // PORTMOU9010021
+{m:"MOUSSE 90/100-16", l:66,a:8.5, p:1.7,t:'MOUSSE'},  // PORTMOU9010016
+{m:"MOUSSE 70/100-19", l:66,a:8.5, p:1.3,t:'MOUSSE'},  // PORTMOU7010019
+{m:"MOUSSE 110/90-19", l:64,a:10,  p:3.4,t:'MOUSSE'}   // PORTMOU1109019
+];
+const MEDIDAS=[...new Set(CAT.map(c=>c.m))].sort();
+const FIND=m=>CAT.find(c=>c.m===m)||null;
+
+// ─── DESTINOS FRECUENTES (km desde GDL, tabla oficial Paquetexpress) ─────────
+// Fuente: LUCELLY_2026_KMS-_CIUDADES_.xlsx — tabla oficial del convenio
+// ✓ = destino confirmado pagada | ★ = tabla oficial convenio
+const DESTINOS=[
+  // 0-400 km (24 HRS)
+  {nombre:"Aguascalientes",     km:220, estado:"Ags",    verif:true,  entrega:"24 hrs"},
+  {nombre:"León",               km:180, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"Guanajuato",         km:175, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"Irapuato",           km:165, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"Silao",              km:170, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"San Fco. del Rincón",km:165, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"Celaya",             km:260, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"San Miguel Allende", km:300, estado:"Gto",    verif:false, entrega:"24 hrs"},
+  {nombre:"Morelia",            km:190, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"La Piedad",          km:140, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"Zamora",             km:150, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"Uruapan",            km:200, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"Moroleon",           km:220, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"Colima",             km:170, estado:"Col",    verif:false, entrega:"24 hrs"},
+  {nombre:"Cd. Guzmán",         km:140, estado:"Jal",    verif:false, entrega:"24 hrs"},
+  {nombre:"Zapotlanejo",        km:45,  estado:"Jal",    verif:false, entrega:"24 hrs"},
+  {nombre:"Tepic",              km:230, estado:"Nay",    verif:false, entrega:"24 hrs"},
+  {nombre:"Puerto Vallarta",    km:310, estado:"Jal",    verif:false, entrega:"24 hrs"},
+  {nombre:"Manzanillo",         km:250, estado:"Col",    verif:false, entrega:"24 hrs"},
+  {nombre:"Tecoman",            km:220, estado:"Col",    verif:false, entrega:"24 hrs"},
+  {nombre:"San Luis Potosí",    km:370, estado:"SLP",    verif:false, entrega:"24 hrs"},
+  {nombre:"Fresnillo",          km:300, estado:"Zac",    verif:false, entrega:"24 hrs"},
+  {nombre:"Zacatecas",          km:320, estado:"Zac",    verif:false, entrega:"24 hrs"},
+  {nombre:"Villa Hidalgo",      km:330, estado:"Zac",    verif:false, entrega:"24 hrs"},
+  {nombre:"San Juan de los Lagos",km:130,estado:"Jal",   verif:false, entrega:"24 hrs"},
+  {nombre:"Lagos de Moreno",    km:170, estado:"Jal",    verif:false, entrega:"24 hrs"},
+  {nombre:"Querétaro",          km:365, estado:"Qro",    verif:true,  entrega:"24 hrs"},
+  {nombre:"San Juan del Río",   km:410, estado:"Qro",    verif:false, entrega:"24 hrs"},
+  // 401-800 km (24 HRS)
+  {nombre:"CDMX / México",      km:560, estado:"CDMX",   verif:true,  entrega:"24 hrs"},
+  {nombre:"Lerma / Toluca",     km:580, estado:"EdoMex", verif:true,  entrega:"24 hrs"},
+  {nombre:"Ixtapaluca",         km:580, estado:"EdoMex", verif:false, entrega:"24 hrs"},
+  {nombre:"Atlacomulco",        km:540, estado:"EdoMex", verif:false, entrega:"24 hrs"},
+  {nombre:"Puebla",             km:650, estado:"Pue",    verif:false, entrega:"24 hrs"},
+  {nombre:"Cuernavaca",         km:650, estado:"Mor",    verif:false, entrega:"24 hrs"},
+  {nombre:"Pachuca",            km:630, estado:"Hgo",    verif:false, entrega:"24 hrs"},
+  {nombre:"Tula de Allende",    km:600, estado:"Hgo",    verif:false, entrega:"24 hrs"},
+  {nombre:"Tepeji del Río",     km:590, estado:"Hgo",    verif:false, entrega:"24 hrs"},
+  {nombre:"Tlaxcala",           km:670, estado:"Tlax",   verif:false, entrega:"24 hrs"},
+  {nombre:"Apizaco",            km:680, estado:"Tlax",   verif:false, entrega:"24 hrs"},
+  {nombre:"Monterrey",          km:700, estado:"NL",     verif:false, entrega:"24 hrs"},
+  {nombre:"Saltillo",           km:760, estado:"Coah",   verif:false, entrega:"24 hrs"},
+  {nombre:"Durango",            km:560, estado:"Dgo",    verif:false, entrega:"24 hrs"},
+  {nombre:"Mazatlán",           km:430, estado:"Sin",    verif:false, entrega:"24 hrs"},
+  {nombre:"Culiacán",           km:640, estado:"Sin",    verif:false, entrega:"24 hrs"},
+  {nombre:"Torreón",            km:640, estado:"Coah",   verif:false, entrega:"24 hrs"},
+  {nombre:"Tampico",            km:750, estado:"Tamps",  verif:false, entrega:"24 hrs"},
+  {nombre:"Ciudad Victoria",    km:730, estado:"Tamps",  verif:false, entrega:"24 hrs"},
+  {nombre:"Ciudad Mante",       km:700, estado:"Tamps",  verif:false, entrega:"24 hrs"},
+  {nombre:"Ciudad Valles",      km:590, estado:"SLP",    verif:false, entrega:"24 hrs"},
+  {nombre:"Uruapan",            km:200, estado:"Mich",   verif:false, entrega:"24 hrs"},
+  {nombre:"Taxco",              km:700, estado:"Gro",    verif:false, entrega:"24 hrs"},
+  {nombre:"Iguala",             km:680, estado:"Gro",    verif:false, entrega:"24 hrs"},
+  // 801-1200 km (48 HRS)
+  {nombre:"Chihuahua",          km:1100,estado:"Chih",   verif:false, entrega:"48 hrs"},
+  {nombre:"Parral",             km:970, estado:"Chih",   verif:false, entrega:"48 hrs"},
+  {nombre:"Los Mochis",         km:850, estado:"Sin",    verif:false, entrega:"48 hrs"},
+  {nombre:"Guasave",            km:810, estado:"Sin",    verif:false, entrega:"48 hrs"},
+  {nombre:"Guamúchil",          km:830, estado:"Sin",    verif:false, entrega:"48 hrs"},
+  {nombre:"Navojoa",            km:980, estado:"Son",    verif:false, entrega:"48 hrs"},
+  {nombre:"Nuevo Laredo",       km:980, estado:"Tamps",  verif:false, entrega:"48 hrs"},
+  {nombre:"Matamoros",          km:1050,estado:"Tamps",  verif:false, entrega:"48 hrs"},
+  {nombre:"Reynosa",            km:1000,estado:"Tamps",  verif:false, entrega:"48 hrs"},
+  {nombre:"Monclova",           km:900, estado:"Coah",   verif:false, entrega:"48 hrs"},
+  {nombre:"Veracruz",           km:900, estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Xalapa",             km:870, estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Córdoba",            km:830, estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Orizaba",            km:820, estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Coatzacoalcos",      km:1100,estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Minatitlán",         km:1100,estado:"Ver",    verif:false, entrega:"48 hrs"},
+  {nombre:"Oaxaca",             km:900, estado:"Oax",    verif:false, entrega:"48 hrs"},
+  {nombre:"Salina Cruz",        km:1050,estado:"Oax",    verif:false, entrega:"48 hrs"},
+  {nombre:"Tehuacán",           km:834, estado:"Pue",    verif:false, entrega:"48 hrs"},
+  {nombre:"Ciudad Obregón",     km:1100,estado:"Son",    verif:false, entrega:"48 hrs"},
+  {nombre:"Acapulco",           km:900, estado:"Gro",    verif:false, entrega:"48 hrs"},
+  {nombre:"Chilpancingo",       km:840, estado:"Gro",    verif:false, entrega:"48 hrs"},
+  // 1201-1600 km (48-72 HRS)
+  {nombre:"Hermosillo",         km:1420,estado:"Son",    verif:true,  entrega:"48-72 hrs"},
+  {nombre:"Guaymas",            km:1300,estado:"Son",    verif:false, entrega:"48-72 hrs"},
+  {nombre:"Cd. Juárez",         km:1450,estado:"Chih",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"Delicias",           km:1250,estado:"Chih",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"Cuauhtémoc",         km:1280,estado:"Chih",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"Piedras Negras",     km:1250,estado:"Coah",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"Villahermosa",       km:1350,estado:"Tab",    verif:false, entrega:"48-72 hrs"},
+  {nombre:"Tuxtla Gutiérrez",   km:1400,estado:"Chis",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"San Cristóbal",      km:1450,estado:"Chis",   verif:false, entrega:"48-72 hrs"},
+  {nombre:"La Paz",             km:1600,estado:"BCS",    verif:false, entrega:"48-72 hrs"},
+  {nombre:"Cárdenas",           km:1300,estado:"Tab",    verif:false, entrega:"48-72 hrs"},
+  // 1601-2000 km (72 HRS)
+  {nombre:"Nogales",            km:1650,estado:"Son",    verif:false, entrega:"72 hrs"},
+  {nombre:"Mérida",             km:1950,estado:"Yuc",    verif:false, entrega:"72 hrs"},
+  {nombre:"Campeche",           km:1800,estado:"Camp",   verif:false, entrega:"72 hrs"},
+  {nombre:"Cabo San Lucas",     km:1950,estado:"BCS",    verif:false, entrega:"72 hrs"},
+  {nombre:"San José del Cabo",  km:1930,estado:"BCS",    verif:false, entrega:"72 hrs"},
+  {nombre:"Loreto",             km:1750,estado:"BCS",    verif:false, entrega:"72 hrs"},
+  {nombre:"Tapachula",          km:1900,estado:"Chis",   verif:false, entrega:"72 hrs"},
+  {nombre:"Comitán",            km:1700,estado:"Chis",   verif:false, entrega:"72 hrs"},
+  {nombre:"Chetumal",           km:2000,estado:"QR",     verif:false, entrega:"72 hrs"},
+  {nombre:"Escárcega",          km:1900,estado:"Camp",   verif:false, entrega:"72 hrs"},
+  {nombre:"Agua Prieta",        km:1750,estado:"Son",    verif:false, entrega:"72 hrs"},
+  {nombre:"Puerto Peñasco",     km:1700,estado:"Son",    verif:false, entrega:"72 hrs"},
+  {nombre:"SL Río Colorado",    km:1900,estado:"Son",    verif:false, entrega:"72 hrs"},
+  // 2001-2400 km (72 HRS)
+  {nombre:"Cancún",             km:2350,estado:"QR",     verif:false, entrega:"72 hrs"},
+  {nombre:"Playa del Carmen",   km:2300,estado:"QR",     verif:false, entrega:"72 hrs"},
+  {nombre:"Tulum",              km:2350,estado:"QR",     verif:false, entrega:"72 hrs"},
+  {nombre:"Cozumel",            km:2380,estado:"QR",     verif:false, entrega:"72 hrs"},
+  {nombre:"Tijuana",            km:2400,estado:"BC",     verif:false, entrega:"72 hrs"},
+  {nombre:"Mexicali",           km:2200,estado:"BC",     verif:false, entrega:"72 hrs"},
+  {nombre:"Ensenada",           km:2350,estado:"BC",     verif:false, entrega:"72 hrs"},
+  {nombre:"Rosarito",           km:2390,estado:"BC",     verif:false, entrega:"72 hrs"},
+  {nombre:"Tecate",             km:2380,estado:"BC",     verif:false, entrega:"72 hrs"},
+  {nombre:"Santa Rosalía",      km:2100,estado:"BCS",    verif:false, entrega:"72 hrs"},
+  {nombre:"Valladolid",         km:2100,estado:"Yuc",    verif:false, entrega:"72 hrs"},
+  // 2400+ km
+  {nombre:"San Quintín",        km:2500,estado:"BC",     verif:false, entrega:"72+ hrs"},
+];
+
+// ─── DESCRIPCIÓN DE LLANTA ───────────────────────────────────────────────────
+function DESC(medida){
+  const m=medida.toUpperCase();
+  if(/^MOUSSE/.test(m))return`Mousse (caja) ${medida.replace(/^MOUSSE\s*/i,'')}`;
+  if(/^\d+X[\d.]+/.test(m))return`Llanta ATV/UTV ${medida}`;
+  if(/^\d+\.\d+-\d+$/.test(m))return`Llanta moto ${medida}`;
+  if(m.includes('ZR'))return`Llanta moto radial ${medida}`;
+  if(m.includes('R')&&m.includes('/'))return`Llanta moto radial ${medida}`;
+  if(m.includes('B')&&m.includes('/'))return`Llanta moto bias ${medida}`;
+  return`Llanta moto ${medida}`;
+}
+
+// ─── TARIFAS & PRECIOS ───────────────────────────────────────────────────────
+const RANGOS=["0-400","401-800","801-1200","1201-1600","1601-2000","2001-2400","2400+"];
+
+// PRECIOS DEL CONVENIO — YA INCLUYEN CRE+EAD
+// Verificado con guías reales:
+//   GDL→Ags  T5 0-400  = $265 ✅ (=$216.62 flete + $48.38 servicios)
+//   GDL→CDMX T6 401-800= $305 ✅ (=$256.62 + $48.38)
+//   GDL→HMO  T6 1201-1600=$520 ✅ (=$471.62 + $48.38)
+//   GDL→Qro  T6 0-400  = $265 ✅  |  GDL→CDMX mix ✅
+const PRECIOS={
+  T1:[150,200,250,300,350,400,550],
+  T2:[150,200,250,300,350,400,550],
+  T3:[205,255,305,405,455,505,755],
+  T4:[265,265,305,405,455,505,755],
+  T5:[265,305,465,520,630,750,995],
+  T6:[265,305,465,520,630,750,995],
+  "7P":[4,5.5,8.5,11,12,14,16],
+  "7V":[890,1550,2650,3450,4100,4700,5500]
+};
+// Seguro Zurich: $16.00 FIJO por guía completa (no por paquete)
+const SEG_FIJO=16.00;
+const ZP=220;   // Zona Plus por paquete
+const IVA=1.16;
+
+function ri(km){if(km<=400)return 0;if(km<=800)return 1;if(km<=1200)return 2;if(km<=1600)return 3;if(km<=2000)return 4;if(km<=2400)return 5;return 6;}
+
+// ─── TARIFA REAL PAQUETEXPRESS ─────────────────────────────────────────────
+// Reglas confirmadas con 5 guías reales pagadas:
+//   1. Peso efectivo = MAX(Vol(m³) × 200, peso real)
+//   2. Tarifa por ese peso efectivo: T1≤10 T2≤20 T3≤30 T4≤40 T5≤50 T6≤60 T7>60
+//   3. Precio MÍNIMO por paquete = precio T4 del rango
+//      (evidencia: guía 10080325 cobró T4 $405 a bulto de 1 llanta, no T6 $520)
+//   4. T7: cobra MAX(pe × $/kg, vol × $/m³)
+function getTarifa(vol,pr,idx){
+  // pe = MAX(volumétrico ×200, peso real) — estándar courier
+  const pe=+Math.max(vol*200,pr||0).toFixed(2);
+  // Mínimo por paquete = T4 del rango.
+  // Evidencia: guía 10080325 (HMO) cobró T4=$405 a bulto de 1 llanta (pv=16kg),
+  // NO T6=$520. La regla previa de "mínimo T6" era incorrecta.
+  const minimo=PRECIOS.T4[idx];
+  let n,costo;
+  if(pe<=10)      {n="T1";costo=PRECIOS.T1[idx];}
+  else if(pe<=20) {n="T2";costo=PRECIOS.T2[idx];}
+  else if(pe<=30) {n="T3";costo=PRECIOS.T3[idx];}
+  else if(pe<=40) {n="T4";costo=PRECIOS.T4[idx];}
+  else if(pe<=50) {n="T5";costo=PRECIOS.T5[idx];}
+  else if(pe<=60) {n="T6";costo=PRECIOS.T6[idx];}
+  else{n="T7";costo=+Math.max(pe*PRECIOS["7P"][idx],vol*PRECIOS["7V"][idx]).toFixed(2);}
+  if(costo<minimo){costo=minimo;n="T4";} // etiquetado igual que Paquetexpress
+  return{n,costo,pe};
+}
+
+function calcPkt(llantas,idx,zp){
+  // Compresión calibrada con 8 guías reales pagadas (catálogo maestro):
+  //   MOTO:  base = diám − 1cm (perfil<14) ó − 2cm (perfil≥14); alto = ΣA × 0.96
+  //   ATV:   base = max(60, diám − 4);                          alto = ΣA × 0.87
+  //   El tipo se decide por campo t del catálogo maestro (TIPO MEDIDA),
+  //   nunca por perfil — una moto 200/55ZR17 (a=20) NO es ATV.
+  const esATV = llantas.some(l=>l.t==='ATV');
+  const esMousse = llantas.some(l=>l.t==='MOUSSE');
+  const mxRaw = Math.max(...llantas.map(l=>l.l));
+  const sumA  = llantas.reduce((s,l)=>s+l.a,0);
+  let mxL, altoReal;
+  if(esMousse){
+    // MOUSSE (cajas rígidas): SIN compresión.
+    // Base = la de la caja más grande de la pila (66×66 si hay mezcla con 64×64,
+    // la base mayor va abajo). Alto = suma exacta de altos de caja.
+    mxL = mxRaw;
+    altoReal = +sumA.toFixed(1);
+  }else if(esATV){
+    mxL = Math.max(60, mxRaw-4);
+    altoReal = +(sumA*0.87).toFixed(1);
+  }else{
+    const perfilMax = Math.max(...llantas.map(l=>l.a));
+    mxL = mxRaw - (perfilMax>=14?2:1);
+    altoReal = +(sumA*0.96).toFixed(1);
+  }
+  const pr = +llantas.reduce((s,l)=>s+l.p,0).toFixed(2);
+  const vol = +((mxL/100)*(mxL/100)*(altoReal/100)).toFixed(5);
+  const t = getTarifa(vol,pr,idx);
+  const costoBase = t.costo+(zp?ZP:0);
+  return{mxL,sumA,altoReal,pr,vol,pv:+(vol*200).toFixed(2),t,costoBase,llantas};
+}
+function pillClass(n){if(n==="T7")return"pt7";const x=parseInt(n.replace("T",""));if(x<=2)return"pt1";if(x<=4)return"pt3";return"pt5";}
+
+// ─── MOTOR ÓPTIMO ────────────────────────────────────────────────────────────
+function optimizar(rows,km,useZP){
+  let exp=[];
+  for(const r of rows){if(!r.medida)continue;const inf=FIND(r.medida);if(!inf)continue;
+    const desc=r.desc||'';const sk=r.medida+'|'+desc; // identidad de SKU: medida + descripción
+    for(let i=0;i<r.cant;i++)exp.push({medida:r.medida,desc,sk,...inf});}
+  if(!exp.length)return[];
+  const idx=ri(km);
+  // REGLA: los mousses (cajas) SIEMPRE viajan separados de las llantas para
+  // evitar daño a las cajas. Se optimiza cada grupo por su cuenta y se suman.
+  const gLlantas=exp.filter(l=>l.t!=='MOUSSE');
+  const gMousses=exp.filter(l=>l.t==='MOUSSE');
+  let out=[];
+  if(gLlantas.length)out=out.concat(optimizarGrupo(gLlantas,idx,useZP));
+  if(gMousses.length)out=out.concat(optimizarGrupo(gMousses,idx,useZP));
+  return out;
+}
+function optimizarGrupo(exp,idx,useZP){
+  exp.sort((a,b)=>b.l-a.l);
+  const skuMap=new Map();
+  for(const l of exp){const k=l.sk;if(!skuMap.has(k))skuMap.set(k,{...l,cnt:0});skuMap.get(k).cnt++;}
+  const skus=[...skuMap.values()];
+  let bestCost=Infinity,bestConfig=null;
+  function buscar(state,pkts){
+    const total=state.reduce((s,c)=>s+c,0);
+    if(total===0){const c=pkts.reduce((s,p)=>s+p.costoBase,0);if(c<bestCost){bestCost=c;bestConfig=pkts.map(p=>({...p,llantas:[...p.llantas]}));}return;}
+    // Bound: costo actual + al menos ceil(restantes/15) paquetes × mínimo T4
+    const costoAct=pkts.reduce((s,p)=>s+p.costoBase,0);
+    if(costoAct+Math.ceil(total/15)*PRECIOS.T4[idx]>=bestCost)return;
+    const first=state.findIndex(c=>c>0);
+    function limAtado(ch,next){
+      const esATV=[...ch,next].some(l=>l.t==='ATV');
+      return esATV?4:15;
+    }
+    function gen(si,cnt,ch){
+      const esATVPkt=ch.some(l=>l.t==='ATV');
+      const limPkt=esATVPkt?4:15;
+      if(si===skus.length){if(!ch.length||ch.length>limPkt)return;const pkt=calcPkt(ch,idx,useZP);const ns=state.map((c,i)=>c-ch.filter(l=>l.sk===skus[i].sk).length);buscar(ns,[...pkts,pkt]);return;}
+      const limSig=limAtado(ch,skus[si]);
+      const mx=Math.min(cnt[si],limSig-ch.length);const mn=si===first?1:0;
+      for(let t=mn;t<=mx;t++){const nc=[...ch];for(let j=0;j<t;j++)nc.push(skus[si]);gen(si+1,cnt,nc);}
+    }
+    gen(0,[...state],[]);
+  }
+  // Exacto solo si el espacio es tratable (particiones crecen ~exponencial con #SKUs)
+  if(exp.length<=20 && skus.length<=7){buscar(skus.map(s=>s.cnt),[]);}
+  // Siempre comparar contra híbrido y quedarse con el más barato
+  const hib=optimizarHibrido(exp,idx,useZP);
+  const costH=hib.reduce((s,p)=>s+p.costoBase,0);
+  if(!bestConfig||costH<bestCost)bestConfig=hib;
+  return bestConfig;
+}
+function optimizarHibrido(exp,idx,useZP){
+  exp.sort((a,b)=>b.l-a.l);
+  let rest=[...exp],grupos=[];
+  while(rest.length){
+    let pkt=[rest.shift()],i=0;
+    while(i<rest.length){
+      const esATV=[...pkt,rest[i]].some(l=>l.t==='ATV');
+      const limH=esATV?4:15;
+      if(pkt.length>=limH){i++;continue;}
+      const c=[...pkt,rest[i]];
+      // Evaluar cabida con calcPkt (aplica compresión real) — antes usaba
+      // dimensiones sin comprimir y desaprovechaba capacidad
+      const test=calcPkt(c,idx,useZP);
+      if(test.t.pe<=60){pkt=c;rest.splice(i,1);}else i++;
+    }
+    grupos.push(pkt);
+  }
+  const pktsG=grupos.map(g=>calcPkt(g,idx,useZP));
+  const costoG=pktsG.reduce((s,p)=>s+p.costoBase,0);
+  if(grupos.length>=2){
+    for(let i=grupos.length-1;i>=1;i--){
+      const merged=[...grupos[i-1],...grupos[i]];const esATVMrg=merged.some(l=>l.t==='ATV');if(merged.length>(esATVMrg?4:15))continue;
+      const pm=calcPkt(merged,idx,useZP);
+      const co=pktsG.filter((_,j)=>j!==i&&j!==i-1).reduce((s,p)=>s+p.costoBase,0)+pm.costoBase;
+      if(co<costoG)return pktsG.filter((_,j)=>j!==i-1&&j!==i).concat([pm]);
+    }
+  }
+  return pktsG;
+}
+
+// ─── FUZZY MATCH MEDIDAS ─────────────────────────────────────────────────────
+// Normaliza medidas de factura al formato del catálogo:
+//   AT25X8.00-12  → 25X8-12
+//   AT25X10.00-12 → 25X10-12
+//   120/70ZR17 M/C (58W) TL VIENTO SPORT ANLAS → 120/70ZR17
+function fuzzyMatch(raw){
+  const R=String(raw).toUpperCase();
+  // MOUSSE: si la descripción trae MOUSSE o el código PORTMOU, se mapea al
+  // catálogo de cajas por su medida ("MOUSSE CAJA 120/90-18", "120/90-18 MOUSSE",
+  // "PORTMOU1209018 …"). NUNCA se confunde con la llanta de la misma medida.
+  if(/MOUSSE|PORTMOU/.test(R)){
+    // v11.9: se acepta CUALQUIER separador entre los 3 números de la medida.
+    //   "MOUSSE 140/80-18"  (catálogo)
+    //   "140-80-18 Enduro TERRAMousse"  (factura con guiones) ← antes fallaba
+    //   "90-100-21 TERRAMousse" / "90/100 - 21" / "140 80 18"
+    const mm=R.match(/(\d{2,3})\s*[\/\-\s]\s*(\d{2,3})\s*[\-\/\s]\s*(\d{2})(?!\d)/);
+    if(mm){
+      const key='MOUSSE '+mm[1]+'/'+mm[2]+'-'+mm[3];
+      const fm=CAT.find(c=>c.m===key);
+      if(fm)return fm;
+    }
+    // Fallback por código compacto: "PORTMOU1408018", "PORTMOU 90 100 21", etc.
+    // Se compara contra la medida del catálogo reducida a puros dígitos.
+    const dig=R.replace(/\D/g,'');
+    if(dig.length>=6){
+      const fm=CAT.find(c=>c.t==='MOUSSE'&&dig.includes(c.m.replace(/\D/g,'')));
+      if(fm)return fm;
+    }
+    return null; // es mousse pero la medida no está en catálogo de cajas
+  }
+  let found=CAT.find(c=>c.m.toUpperCase()===raw.toUpperCase());
+  if(found)return found;
+  const norm=s=>s.toUpperCase()
+    .replace(/^AT/,'')       // quita prefijo AT de llantas ATV
+    // v11.9: medida moto escrita con guiones → formato catálogo (140-80-18 → 140/80-18)
+    .replace(/^(\d{2,3})\s*-\s*(\d{2,3})\s*-\s*(\d{2})(?!\d)/,'$1/$2-$3')
+    .replace(/\.00/g,'')    // quita decimales .00 (8.00 → 8)
+    .replace(/\s.*$/,'')    // quita todo desde el primer espacio (marca, specs)
+    .replace(/M\/C/g,'')   // quita M/C
+    .replace(/\s+/g,'')
+    .trim();
+  const rawN=norm(raw);
+  found=CAT.find(c=>norm(c.m)===rawN);
+  if(found)return found;
+  found=CAT.find(c=>rawN.startsWith(norm(c.m))||norm(c.m).startsWith(rawN));
+  return found||null;
+}
+
+// ─── LEER PDFs / IMÁGENES DE FACTURA (1 o varias, mismo destino) ───────────
+// PDF (CFDI):   A) Cadena Original |ClaveProdServ|Cantidad|H87|Descripción|
+//               B) Fallback regex tolerante con espacios
+//               C) Fallback parser genérico de texto (facturas de otros emisores)
+// Imagen:       OCR con tesseract.js (se carga solo la primera vez) + parser genérico
+// Dedupe por Folio Fiscal (UUID). Cantidades de la misma medida se suman entre archivos.
+// v11.9: se agrega la forma con guiones "140-80-18" / "90-100-21" (mousses en
+// factura). El (?!\d) final evita capturar fechas tipo 08-11-2025.
+const MEDIDA_RE=/((?:AT)?\d{2}X[\d.]{1,6}(?:R|-)\d{1,2}|\d{2,3}\/\d{2,3}(?:[A-Z]{1,2}\d{2}|-\d{2})|\d{2,3}-\d{2,3}-\d{2}(?!\d)|\d\.\d{2}-\d{2})/;
+function fixOCR(t){
+  return t
+    .replace(/(\d{2,3}\/\d{2})2R(\d{2})/g,'$1ZR$2')      // 602R17 → 60ZR17
+    .replace(/(\d{1,3})\s*%\s*(?=(?:AT)?\d)/g,'$1× ');    // "5% 150…" → "5× 150…"
+}
+const CANT_RE=/^(\d{1,3})(?:[.,]0{1,2})?\.?$/; // "10", "10.00", "10.00." — NO "$550" ni "5,500.00"
+// Si la línea trae MOUSSE/PORTMOU pero la descripción extraída no conservó la
+// palabra, se antepone "MOUSSE " para que fuzzyMatch la mande al catálogo de cajas.
+function tagMousse(linea,desc){
+  return (/MOUSSE|PORTMOU/i.test(linea)&&!/MOUSSE/i.test(desc))?('MOUSSE '+desc):desc;
+}
+function parseTextoGenerico(txt,acum){
+  const lineas=fixOCR(txt).split(/\n/).map(l=>l.trim()).filter(Boolean);
+  let n=0;
+  for(let i=0;i<lineas.length;i++){
+    const l=lineas[i];
+    // A0: "2 MOUSSE 120/90-18 …" / "2 MOUSSE CAJA 120/90-18" — cantidad + MOUSSE + medida
+    let m=l.match(new RegExp('^(\\d{1,3})\\s+((?:MOUSSE|PORTMOU\\S*)(?:\\s+CAJA)?\\s+'+MEDIDA_RE.source+'.*)$','i'));
+    if(m){addLinea(acum,tagMousse(l,m[2].trim()),parseInt(m[1]));n++;continue;}
+    // A: "6 110/70-17 DESC…" — cantidad al inicio (tabla de factura)
+    m=l.match(new RegExp('^(\\d{1,3})\\s+'+MEDIDA_RE.source+'(.*)$'));
+    if(m){addLinea(acum,tagMousse(l,(m[2]+' '+(m[3]||'').trim()).trim()),parseInt(m[1]));n++;continue;}
+    // B: "3× 25X8-12" / "3× MOUSSE 120/90-18" — chips / listas
+    m=l.match(new RegExp('(\\d{1,3})\\s*[×xX]\\s*((?:MOUSSE\\s+)?(?:CAJA\\s+)?'+MEDIDA_RE.source+')','i'));
+    if(m){addLinea(acum,tagMousse(l,m[2]),parseInt(m[1]));n++;continue;}
+    // D: medida en CUALQUIER posición — órdenes SAP donde el código precede
+    //    ("1107017SPRDRCEAT |110/70ZR17 SPORTRAD TL 54W CEAT 10.00 $550…")
+    m=l.match(MEDIDA_RE);
+    if(m){
+      const desde=l.slice(l.indexOf(m[1]));
+      const toks=desde.split(/\s+/);
+      let cant=null, corte=toks.length;
+      for(let k=1;k<toks.length;k++){
+        if(/\$/.test(toks[k])){corte=k;break;}
+        const cm=toks[k].match(CANT_RE);
+        if(cm){cant=parseInt(cm[1]);corte=k;break;}
+      }
+      if(cant===null){
+        for(let j=i+1;j<=Math.min(i+3,lineas.length-1);j++){
+          const t=lineas[j];
+          if(MEDIDA_RE.test(t)||/\$/.test(t))break;
+          const cm=t.match(CANT_RE);
+          if(cm){cant=parseInt(cm[1]);break;}
+        }
+      }
+      addLinea(acum,tagMousse(l,toks.slice(0,corte).join(' ')),cant||1);n++;
+    }
+  }
+  return n;
+}
+async function preprocesarImagen(file){
+  const img=await createImageBitmap(file);
+  let esc=img.width<1800?2:1;                 // upscale solo si viene chica/comprimida
+  const maxLado=2800;                          // techo: fotos de 4000px+ vuelven lento/inestable el OCR
+  if(Math.max(img.width,img.height)*esc>maxLado)esc=maxLado/Math.max(img.width,img.height);
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(img.width*esc); cv.height=Math.round(img.height*esc);
+  const ctx=cv.getContext('2d');
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+  ctx.drawImage(img,0,0,cv.width,cv.height);
+  const d=ctx.getImageData(0,0,cv.width,cv.height);
+  const px=d.data;
+  for(let i=0;i<px.length;i+=4){               // grises + contraste suave
+    let g=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
+    g=Math.max(0,Math.min(255,(g-128)*1.25+128));
+    px[i]=px[i+1]=px[i+2]=g;
+  }
+  ctx.putImageData(d,0,0);
+  return cv;
+}
+let _ocrWorker=null;
+async function getOCR(el){
+  if(_ocrWorker)return _ocrWorker;
+  if(!window.Tesseract){
+    if(el)el.textContent='Cargando lector de imágenes (solo la primera vez)…';
+    await cargarScript(CDN_TESS).catch(()=>{throw new Error('Sin internet para cargar el lector de imágenes — conéctate y reintenta');});
+  }
+  try{_ocrWorker=await Tesseract.createWorker('spa');}
+  catch(e){_ocrWorker=await Tesseract.createWorker('eng');} // respaldo si el modelo español no descarga
+  return _ocrWorker;
+}
+async function leerArchivos(files){
+  const el=document.getElementById('json-status');
+  if(!files||!files.length)return;
+  const acum=new Map(), uuids=new Set();
+  let ok=0, avisos=[];
+    for(const f of files){
+     try{
+      const esImg=/^image\//.test(f.type)||/\.(png|jpe?g|webp|bmp)$/i.test(f.name);
+      if(esImg){
+        const w=await getOCR(el);
+        if(el){el.style.color='#888';el.textContent=`Leyendo imagen ${f.name}…`;}
+        // Preprocesar: escala 2×, grises y contraste — mejora fotos de WhatsApp
+        const prep=await preprocesarImagen(f);
+        // OCR adaptativo: cada layout de tabla lee mejor con un PSM distinto.
+        // Se prueban 4 (columna, el mejor p/ órdenes SAP), 3 (auto) y 6 (bloque),
+        // y se conserva el intento que extraiga más medidas.
+        let best=null;
+        for(const psm of ['4','3','6']){
+          await w.setParameters({tessedit_pageseg_mode:psm});
+          const {data}=await w.recognize(prep);
+          const tmp=new Map();
+          const n=parseTextoGenerico(data.text||'',tmp);
+          if(!best||tmp.size>best.size)best=tmp;
+          if(tmp.size>=2)break;               // suficiente señal, no seguir probando
+        }
+        if(best&&best.size){
+          for(const [k,v] of best){            // volcar al acumulador global (suma multi-archivo)
+            if(acum.has(k))acum.get(k).cant+=v.cant;
+            else acum.set(k,v);
+          }
+          ok++;
+        }
+        else avisos.push(`${f.name}: no se detectaron productos legibles — intenta reenviar la imagen como DOCUMENTO en WhatsApp (sin comprimir) o toma la captura más de cerca`);
+        continue;
+      }
+      // ── PDF ──
+      if(!window.pdfjsLib)await _pdfjsReady.catch(()=>{});
+      if(!window.pdfjsLib){avisos.push(`${f.name}: sin internet para el lector de PDF — conéctate y reintenta`);continue;}
+      if(el){el.style.color='#888';el.textContent=`Leyendo ${f.name}…`;}
+      const buf=await f.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      let raw='', spaced='';
+      for(let p=1;p<=pdf.numPages;p++){
+        const tc=await(await pdf.getPage(p)).getTextContent();
+        raw+=tc.items.map(i=>i.str).join('');
+        spaced+=tc.items.map(i=>i.str).join(' ')+'\n';
+      }
+      if(/SOLICITUD DE SERVICIO|CARTA PORTE/i.test(raw)&&!/Cadena Original/i.test(raw)){
+        avisos.push(`${f.name}: es una GUÍA de Paquetexpress — sube la FACTURA (CFDI)`);continue;
+      }
+      const um=raw.match(/[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/i);
+      if(um){if(uuids.has(um[0].toUpperCase())){avisos.push(`${f.name}: duplicada, omitida`);continue;}uuids.add(um[0].toUpperCase());}
+      let re=/\|(2517\d{4})\|(\d+)(?:\.\d+)?\|H87\|([^|]{3,90})\|/g, m, n=0;
+      while((m=re.exec(raw))!==null){addLinea(acum,m[3],parseInt(m[2]));n++;}
+      if(!n){
+        re=/\|\s*(2517\d{4})\s*\|\s*(\d+)(?:\.\d+)?\s*\|\s*H87\s*\|\s*([^|]{3,90}?)\s*\|/g;
+        while((m=re.exec(spaced))!==null){addLinea(acum,m[3],parseInt(m[2]));n++;}
+      }
+      if(!n)n=parseTextoGenerico(spaced,acum);  // facturas de otros emisores
+      if(n)ok++; else avisos.push(`${f.name}: sin conceptos legibles`);
+     }catch(e){avisos.push(`${f.name}: ${e.message}`);}
+    }
+  if(!acum.size){
+    if(el){el.style.color='#c44';el.textContent='⚠ No se extrajeron productos. '+(avisos[0]||'');}
+    return;
+  }
+  S.pdfPreview=[...acum.values()].map(v=>{
+    const match=fuzzyMatch(v.medida_raw);
+    return{medida_raw:v.medida_raw,cant:v.cant,descripcion:v.descripcion,
+      medida_matched:match?match.m:null,matched:!!match,usar:true};
+  });
+  if(el){el.style.color='#FF5C1E';
+    el.textContent=`✓ ${ok} archivo(s), ${S.pdfPreview.length} medida(s).`+(avisos.length?` ⚠ ${avisos.join(' · ')}`:'');}
+  render();
+}
+function addLinea(acum,descRaw,cant){
+  const d=String(descRaw).trim().replace(/\s{2,}/g,' ');
+  if(!d||!cant)return;
+  if(/^ENVIOS?$|FLETE|SEGURO/i.test(d))return;
+  // Llave = descripción COMPLETA normalizada. Antes se usaba solo el primer
+  // token (la medida), lo que fusionaba SKUs distintos de la misma medida
+  // (ej. 90/90-17 EUROGRIP vs 90/90-17 PLUSWAY) en una sola línea.
+  const key=d.toUpperCase();
+  if(acum.has(key))acum.get(key).cant+=cant;
+  else acum.set(key,{medida_raw:d,cant,descripcion:d});
+}
+
+// ─── IMPORTAR DESDE JSON ─────────────────────────────────────────────────────
+function importarJSON(jsonText){
+  const el=document.getElementById('json-status');
+  if(!jsonText||!jsonText.trim()){if(el)el.textContent='⚠ Pega el JSON primero.';return;}
+  let lines;
+  try{lines=JSON.parse(jsonText.trim());}
+  catch(e){if(el)el.textContent='⚠ JSON inválido. Cópialo exactamente como Claude lo generó.';return;}
+  if(!Array.isArray(lines)||!lines.length){if(el)el.textContent='⚠ No se encontraron líneas.';return;}
+  const preview=lines.map(l=>{
+    const match=fuzzyMatch(String(l.medida||''));
+    return{medida_raw:String(l.medida||''),cant:Math.max(1,parseInt(l.cant)||1),
+      descripcion:String(l.descripcion||l.medida||''),medida_matched:match?match.m:null,matched:!!match,usar:true};
+  }).filter(l=>l.medida_raw);
+  if(!preview.length){if(el)el.textContent='⚠ No se encontraron medidas válidas.';return;}
+  S.pdfPreview=preview;if(el)el.textContent='';render();
+}
+function togglePDFLine(idx){if(S.pdfPreview[idx])S.pdfPreview[idx].usar=S.pdfPreview[idx].usar===false;render();}
+function upPDFCant(idx,v){if(S.pdfPreview[idx])S.pdfPreview[idx].cant=Math.max(1,parseInt(v)||1);}
+
+// ─── AUTOTEST DE CALIBRACIÓN ────────────────────────────────────────────────
+// Corre al abrir. Si una edición futura (catálogo, tarifas, compresión) hace que
+// el modelo deje de reproducir las guías reales pagadas, aparece un banner rojo.
+function autotest(){
+  const f=[];
+  const g=(m)=>CAT.find(x=>x.m.toUpperCase()===m); 
+  const T=(lls,km,esperado,nombre)=>{
+    try{
+      const p=calcPkt(lls,ri(km),false);
+      if(Math.abs(p.costoBase-esperado)>0.01)f.push(`${nombre}: $${p.costoBase} ≠ $${esperado}`);
+    }catch(e){f.push(`${nombre}: ${e.message}`);}
+  };
+  const a25x8=g('25X8-12'),a25x10=g('25X10-12'),a24x10=g('24X10-11'),m150=g('150/60ZR17'),m110=g('110/70R17');
+  if(!a25x8||!a25x10||!a24x10||!m150||!m110){f.push('faltan medidas de referencia en catálogo');}
+  else{
+    T([a25x8,a25x8,a25x10,a25x10],1420,520,'10081316 HMO 2+2 ATV');   // T6 idx3
+    T([a25x10,a25x10,a25x10],1420,520,'10080901 HMO 3×25X10');        // T6 idx3
+    T([a24x10],1420,405,'10080325 HMO 1×24X10');                       // mínimo T4 idx3
+    T([m150,m150,m150,m150,m150],650,305,'Puebla 5×150/60ZR17');       // T6 idx1
+    T([m150,m150,m150,m150,m150,m110],834,465,'Tehuacán 6pz');         // T6 idx2
+  }
+  // Consistencia interna MOUSSE (derivada del modelo, aún sin guía real pagada):
+  //   caja sin compresión, base=mayor, alto=Σaltos, pe=max(vol×200, real), mínimo T4
+  const ms90=g('MOUSSE 90/90-21'),ms120=g('MOUSSE 120/90-18');
+  if(!ms90||!ms120){f.push('faltan mousses de referencia en catálogo');}
+  else{
+    T([ms120],1420,405,'MOUSSE 1 caja 64×64×10 (mín. T4 idx3)');       // pv=8.2 → mínimo T4
+    T([ms90,ms90,ms120,ms120],220,265,'MOUSSE mixto 66 base 4 cajas'); // 66×66×37 → pv=32.2 → T4=mín idx0
+  }
+  // ── v11.9: reconocimiento de medidas (fuzzyMatch) ─────────────────────────
+  // Casos reales de factura que antes caían en "No encontrada".
+  const M=(raw,esperado)=>{
+    const r=fuzzyMatch(raw);
+    const got=r?r.m:null;
+    if(got!==esperado)f.push(`match "${raw}": ${got||'null'} ≠ ${esperado}`);
+  };
+  M('140-80-18 Enduro TERRAMousse','MOUSSE 140/80-18');
+  M('90-100-21 Enduro TERRAMousse','MOUSSE 90/100-21');
+  M('MOUSSE 120/90-18','MOUSSE 120/90-18');
+  M('PORTMOU1109019','MOUSSE 110/90-19');
+  M('140/80-18','140/80-18');            // llanta NO se confunde con mousse
+  M('90/100-21 KNIGHT TL','90/100-21');  // llanta NO se confunde con mousse
+  M('140-80-18 KNIGHT TL','140/80-18');  // llanta con guiones → sigue siendo llanta
+  M('AT25X10.00-12 6PR ATV TERRAPLUS TL KNIGHT','25X10-12');
+  M('120/70ZR17 M/C (58W) TL VIENTO SPORT ANLAS','120/70ZR17');
+  if(MEDIDA_RE.test('Fecha Pedimento: 08-11-2025'))f.push('MEDIDA_RE captura fechas dd-mm-aaaa');
+  if(f.length){
+    const d=document.createElement('div');
+    d.style.cssText='background:#c0392b;color:#fff;padding:10px 16px;font-size:13px;position:sticky;top:0;z-index:99';
+    d.innerHTML='⚠ <b>CALIBRACIÓN ROTA</b> — el modelo ya no reproduce las guías reales de referencia. NO cotizar hasta corregir. Detalle: '+f.join(' · ');
+    document.body.prepend(d);
+  }
+}
+document.addEventListener('DOMContentLoaded',autotest);
+
+// ─── ESTADO GLOBAL ───────────────────────────────────────────────────────────
+let S={
+  km:220, zp:false, seguro:true, // seguro SIEMPRE activo — obligatorio en toda guía
+  rows:[{id:1,medida:'',cant:1}], nid:2,
+  pkts:null, descs:{}, pdfPreview:null,
+  envio:{folio:'',dest:'',dir:'',ciudad:'',tel:''},
+  guias:{}, vista:'pedido', computando:false,
+  busqDest:'', destNombre:''
+};
+
+function today(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function addRow(){S.rows.push({id:S.nid++,medida:'',cant:1});render();}
+function delRow(id){
+  if(S.rows.length>1)S.rows=S.rows.filter(r=>r.id!==id);
+  else S.rows=[{id:S.nid++,medida:'',cant:1}]; // última línea: se limpia en vez de ignorar el clic
+  render();
+}
+function upRow(id,f,v){const r=S.rows.find(x=>x.id===id);if(r){if(f==='medida'&&r.medida!==v)r.desc='';r[f]=f==='cant'?Math.max(1,+v):v;}render();}
+function upKm(v){S.km=Math.max(1,+v);render();}
+function upZP(v){S.zp=v;if(S.pkts)calcular();else render();}
+function setVista(v){S.vista=v;render();}
+function limpiar(){S.rows=[{id:S.nid++,medida:'',cant:1}];S.pkts=null;S.pdfPreview=null;S.guias={};S.descs={};S.vista='pedido';render();}
+function getDesc(medida){return S.descs[medida]||DESC(medida);}
+// Descripción por llanta: usa la del SKU si viene de factura; si no, la genérica de la medida
+function descLl(l){return l.desc||getDesc(l.medida);}
+// Agrupa llantas de un paquete por SKU (no por medida) → [etiqueta, cantidad]
+function contarSKUs(llantas){
+  const counts=new Map();
+  for(const l of llantas){const k=descLl(l);counts.set(k,(counts.get(k)||0)+1);}
+  return[...counts.entries()];
+}
+function setDest(km,nombre,ciudad){
+  S.km=km;
+  if(nombre&&!S.envio.dest)S.envio.dest=nombre;
+  if(ciudad&&!S.envio.ciudad)S.envio.ciudad=ciudad;
+  if(S.pkts)calcular();else render();
+}
+
+function calcular(){
+  S.computando=true;render();
+  setTimeout(()=>{S.pkts=optimizar(S.rows,S.km,S.zp);S.computando=false;S.vista='paquetes';render();},30);
+}
+function confirmarPDF(){
+  if(!S.pdfPreview)return;
+  const matched=S.pdfPreview.filter(l=>l.medida_matched&&l.usar!==false);
+  if(matched.length){
+    S.rows=S.rows.filter(r=>r.medida);
+    for(const l of matched){
+      // Un renglón por SKU: solo se suma si medida Y descripción coinciden.
+      // Dos productos distintos con la misma medida quedan como líneas separadas.
+      const dsc=l.descripcion||'';
+      const ex=S.rows.find(r=>r.medida===l.medida_matched&&(r.desc||'')===dsc);
+      if(ex)ex.cant+=l.cant;
+      else S.rows.push({id:S.nid++,medida:l.medida_matched,cant:l.cant,desc:dsc});
+    }
+    if(!S.rows.length)S.rows=[{id:S.nid++,medida:'',cant:1}];
+  }
+  S.pdfPreview=null;render();
+}
+
+// ─── PACKING LIST PDF ────────────────────────────────────────────────────────
+function generarPackingPDF(){
+  if(!S.pkts||!S.pkts.length)return;
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const W=210,PL=15,PR=15,PT=15;
+  let y=PT;
+  const usableW=W-PL-PR;
+  const GREEN=[255,92,30],GRAY=[136,136,136],DARK=[26,26,24],GREEN_BG=[255,237,228],GRAY_LINE=[224,221,214]; // naranja Llantymoto
+  function setFont(bold,size,color){doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(size);doc.setTextColor(...(color||DARK));}
+  function rect(x,ry,w,h,fill){doc.setFillColor(...fill);doc.rect(x,ry,w,h,'F');}
+  function line(x1,y1,x2,y2,color,lw){doc.setDrawColor(...(color||GRAY));doc.setLineWidth(lw||0.3);doc.line(x1,y1,x2,y2);}
+  function text(txt,x,ty,opts){doc.text(String(txt),x,ty,opts||{});}
+
+  // HEADER
+  rect(PL,y,usableW,14,GREEN_BG);
+  setFont(true,15,GREEN);text('PACKING LIST',PL+4,y+9);
+  setFont(false,8,GRAY);text('Optimizador · Paquetexpress · Convenio verificado',PL+4,y+13.5);
+  setFont(true,10,DARK);text(`Folio: ${S.envio.folio||'—'}`,W-PR,y+6,{align:'right'});
+  setFont(false,8,DARK);text(`Fecha: ${today()}`,W-PR,y+11,{align:'right'});
+  y+=20;
+
+  // DESTINATARIO + RESUMEN
+  setFont(true,7,GRAY);text('DESTINATARIO',PL,y);
+  setFont(true,7,GRAY);text('RESUMEN DEL ENVÍO',PL+usableW*0.55,y);
+  y+=4;
+  setFont(true,10,DARK);text(S.envio.dest||'—',PL,y);
+  const totalBase=S.pkts.reduce((s,p)=>s+p.costoBase,0);
+  const seg=S.seguro?SEG_FIJO:0;
+  const subtotal=totalBase+seg;
+  setFont(false,9,DARK);text(`Km: ${S.km}  (${RANGOS[ri(S.km)]})`,PL+usableW*0.55,y);
+  y+=5;setFont(false,8,DARK);
+  text(S.envio.dir||'—',PL,y);
+  text(`Paquetes: ${S.pkts.length}  ·  Piezas: ${S.pkts.reduce((s,p)=>s+p.llantas.length,0)}`,PL+usableW*0.55,y);
+  y+=4;
+  text(S.envio.ciudad||'—',PL,y);
+  text(`CRE+EAD: incluidos en precio convenio`,PL+usableW*0.55,y);
+  y+=4;
+  if(S.envio.tel)text(`Tel: ${S.envio.tel}`,PL,y);
+  text(`Seguro Zurich: $${seg.toFixed(2)} fijo por guía`,PL+usableW*0.55,y);
+  y+=8;
+  line(PL,y,W-PR,y,GRAY,0.5);y+=6;
+
+  // PAQUETES
+  for(let i=0;i<S.pkts.length;i++){
+    const p=S.pkts[i];
+    const lineas=contarSKUs(p.llantas).map(([d,n])=>`${n} pza${n>1?'s':''}  ${d}`);
+    const guia=S.guias[i]||'—';
+    const estH=14+(lineas.length*4.5)+12;
+    if(y+estH>270){doc.addPage();y=PT;}
+
+    // Cabecera paquete
+    rect(PL,y,usableW,8,[249,249,247]);
+    setFont(true,9,DARK);text(`PAQUETE ${i+1}`,PL+3,y+5.5);
+    setFont(false,8,GRAY);text(p.t.n,PL+32,y+5.5);
+    setFont(false,8,DARK);text(`$${p.costoBase.toFixed(0)}`,W-PR,y+5.5,{align:'right'});
+    y+=10;
+
+    // Guía
+    setFont(false,7,GRAY);text('Guía:',PL+3,y);
+    setFont(true,8,guia==='—'?GRAY:DARK);text(guia,PL+16,y);
+    y+=5;
+
+    // Contenido
+    setFont(false,7,GRAY);text('Contenido:',PL+3,y);y+=3.5;
+    for(const lin of lineas){
+      const partes=lin.split(/\s{2,}/);
+      setFont(true,8,DARK);text(partes[0],PL+6,y);
+      setFont(false,8,DARK);text(partes.slice(1).join('  '),PL+6+12,y);
+      line(PL+6,y+1.5,PL+usableW,y+1.5,GRAY_LINE,0.15);
+      y+=4.5;
+    }
+    y+=1;
+
+    // Dimensiones
+    const dimData=[['Largo',`${p.mxL} cm`],['Ancho',`${p.mxL} cm`],['Alto',`${p.altoReal} cm`],
+      ['Volumen',`${p.vol.toFixed(4)} m³`],['P. Real',`${p.pr.toFixed(1)} kg`],['Vol×200',`${p.pv.toFixed(1)} kg`]];
+    const cw=usableW/6;
+    dimData.forEach(([lbl,val],di)=>{
+      const dx=PL+di*cw;
+      setFont(false,7,GRAY);text(lbl,dx+cw/2,y,{align:'center'});
+      setFont(true,8,DARK);text(val,dx+cw/2,y+4,{align:'center'});
+    });
+    y+=10;
+    line(PL,y,W-PR,y,GRAY,0.3);y+=5;
+  }
+
+  // TOTALES
+  if(y>255){doc.addPage();y=PT;}
+  y+=2;
+  const tx=W-PR-60;
+  setFont(false,8,GRAY);text('Subtotal paquetes:',tx,y,{align:'right'});
+  setFont(false,8,DARK);text(`$${totalBase.toFixed(2)}`,W-PR,y,{align:'right'});y+=5;
+  S.seguro=true; // el seguro es obligatorio: no existe forma de quitarlo
+  if(S.seguro){
+    setFont(false,8,GRAY);text('Seguro Zurich (fijo):',tx,y,{align:'right'});
+    text(`$${SEG_FIJO.toFixed(2)}`,W-PR,y,{align:'right'});y+=5;
+  }
+  if(S.zp){
+    setFont(false,8,GRAY);text(`Zona Plus (${S.pkts.length}×$${ZP}):`,tx,y,{align:'right'});
+    text(`$${(ZP*S.pkts.length).toFixed(0)}`,W-PR,y,{align:'right'});y+=5;
+  }
+  setFont(false,8,GRAY);text('IVA (16%):',tx,y,{align:'right'});
+  text(`$${(subtotal*0.16).toFixed(2)}`,W-PR,y,{align:'right'});y+=5;
+  rect(tx-5,y-1,usableW-(tx-PL-5),8,GREEN_BG);
+  setFont(true,10,GREEN);text('TOTAL CON IVA:',tx,y+5,{align:'right'});
+  text(`$${(subtotal*IVA).toFixed(2)}`,W-PR,y+5,{align:'right'});
+  y+=14;
+
+  // NOTA CONVENIO
+  if(y<260){
+    setFont(false,7,GRAY);
+    text('✓ Precios del convenio Paquetexpress ya incluyen CRE (recolección) + EAD (entrega a domicilio)',PL,y);
+    y+=4;
+    text('CRE+EAD y seguro incluidos.',PL,y);
+    y+=8;
+  }
+
+  // FIRMAS
+  if(y>250){doc.addPage();y=PT;}
+  line(PL,y,W-PR,y,GRAY,0.5);y+=6;
+  const fw=(usableW-10)/3;
+  ['Elaboró / Almacén','Recibió / Transportista','Fecha de entrega'].forEach((f,fi)=>{
+    const fx=PL+fi*(fw+5);
+    setFont(false,8,GRAY);text(f,fx+fw/2,y,{align:'center'});
+    line(fx+4,y+16,fx+fw-4,y+16,GRAY,0.3);
+    setFont(false,7,GRAY);text('Nombre y firma',fx+fw/2,y+20,{align:'center'});
+  });
+  y+=24;
+
+  // FOOTER
+  line(PL,y,W-PR,y,GRAY,0.3);y+=4;
+  setFont(false,7,GRAY);
+  text(`Generado el ${today()}  ·  Optimizador Llantas Paquetexpress  ·  Motor óptimo exhaustivo`,W/2,y,{align:'center'});
+
+  doc.save(`PackingList_${S.envio.folio||'pedido'}_${today()}.pdf`);
+}
+
+// ─── RENDER PEDIDO ───────────────────────────────────────────────────────────
+function renderPedido(){
+  const totalL=S.rows.reduce((s,r)=>s+(r.medida?r.cant:0),0);
+  const totalP=S.rows.reduce((s,r)=>{if(!r.medida)return s;const inf=FIND(r.medida);return s+(inf?inf.p*r.cant:0);},0);
+
+  // Preview importación JSON
+  let pdfSection='';
+  if(S.pdfPreview&&S.pdfPreview.length>0){
+    const rows=S.pdfPreview.map((l,i)=>{
+      const usar=l.usar!==false;
+      const matchTxt=l.matched?`<span class="match-yes">✓ ${l.medida_matched}</span>`:`<span class="match-no">⚠ No encontrada</span>`;
+      return`<div class="preview-row" style="opacity:${usar?1:.4}">
+        <div><div style="font-weight:500">${l.medida_raw}</div>${l.descripcion?`<div style="font-size:11px;color:#888">${l.descripcion}</div>`:''}</div>
+        <span><input type="number" min="1" value="${l.cant}" style="width:58px;height:28px;text-align:center"
+          onchange="upPDFCant(${i},this.value)" title="Verifica la cantidad — puede venir de lectura OCR"></span><span>${matchTxt}</span>
+        <button class="btn btn-sm" onclick="togglePDFLine(${i})">${usar?'Excluir':'Incluir'}</button>
+      </div>`;
+    }).join('');
+    const mc=S.pdfPreview.filter(l=>l.matched&&l.usar!==false).length;
+    pdfSection=`<div class="card">
+      <div class="section-label">Líneas detectadas</div>
+      <div class="alert alert-info" style="margin-bottom:8px"><span>📄</span><span>${S.pdfPreview.length} líneas · ${mc} en catálogo · Revisa y confirma</span></div>
+      <div class="preview-row header"><span>Medida (PDF)</span><span>Cant.</span><span>Catálogo</span><span></span></div>
+      ${rows}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary btn-sm" onclick="confirmarPDF()">✓ Confirmar y agregar al pedido</button>
+        <button class="btn btn-sm" onclick="S.pdfPreview=null;render()">Cancelar</button>
+      </div>
+    </div>`;
+  }
+
+  // Destinos frecuentes con búsqueda
+  const destBtns=DESTINOS.filter(d=>{
+    if(!S.busqDest)return true;
+    const q=S.busqDest.toUpperCase();
+    return d.nombre.toUpperCase().includes(q)||d.estado.toUpperCase().includes(q);
+  }).map(d=>{
+    const activo=S.km===d.km&&S.destNombre===d.nombre;
+    const vBadge=d.verif?`<span class="verif-badge verif-ok">✓</span>`:`<span class="verif-badge verif-warn">~</span>`;
+    return`<button class="dest-btn" style="${activo?'border-color:#FF5C1E;background:#FFEDE4':''}"
+      onclick="setDest(${d.km},'${d.nombre}, ${d.estado}','${d.nombre}, ${d.estado}');S.destNombre='${d.nombre}';render()">
+      <span class="dest-name">${d.nombre} ${vBadge}</span>
+      <span class="dest-km">${d.km} km · ${d.entrega}</span>
+    </button>`;
+  }).join('');
+
+  return`
+  <!-- Importar pedido -->
+  <div class="card">
+    <div class="section-label">Importar pedido — factura PDF o imagen</div>
+    <div style="border:2px dashed #FF5C1E;border-radius:10px;padding:18px;text-align:center;background:#FFF7F2;cursor:pointer"
+      onclick="document.getElementById('pdf-files').click()"
+      ondragover="event.preventDefault();this.style.background='#FFEDE4'"
+      ondragleave="this.style.background='#FFF7F2'"
+      ondrop="event.preventDefault();this.style.background='#FFF7F2';leerArchivos(event.dataTransfer.files)">
+      <div style="font-size:24px">📄🖼️</div>
+      <div style="font-weight:600;margin:4px 0">Sube facturas PDF, fotos o capturas (1 o más, mismo destino)</div>
+      <div style="font-size:12px;color:#888">Clic o arrastra aquí · PDF de factura, foto de factura o captura de cotización · Se suman cantidades repetidas</div>
+      <input type="file" id="pdf-files" accept="application/pdf,image/*" multiple style="display:none"
+        onchange="leerArchivos(this.files);this.value=''">
+    </div>
+    <div style="margin-top:8px"><span id="json-status" style="font-size:12px;color:#c44"></span></div>
+
+  </div>
+  ${pdfSection}
+
+  <!-- Configuración del envío -->
+  <div class="card">
+    <div class="section-label">Destino y configuración</div>
+    <!-- KM + controles -->
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+      <label style="font-size:13px;color:#555;white-space:nowrap;font-weight:500">Kilómetros al destino:</label>
+      <input type="number" min="1" max="9999" value="${S.km}" style="width:90px" onchange="upKm(+this.value)">
+      <span style="font-size:12px;padding:3px 10px;border-radius:10px;background:#f5f5f3;font-weight:600;color:#555">Rango ${RANGOS[ri(S.km)]}</span>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#555;margin-left:auto;cursor:pointer">
+        <input type="checkbox" ${S.zp?'checked':''} onchange="upZP(this.checked)"> Zona Plus (+$${ZP}/paquete)
+      </label>
+    </div>
+    <!-- Destinos frecuentes -->
+    <div style="font-size:11px;color:#888;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+      <span>Destinos frecuentes — <span class="verif-badge verif-ok">✓</span> destino confirmado &nbsp; <span class="verif-badge verif-warn">~</span> distancia oficial del convenio</span>
+      ${S.km?`<span style="background:#FFEDE4;color:#B23A08;font-weight:600;padding:3px 10px;border-radius:8px;font-size:12px">⏱ Entrega: ${DESTINOS.find(d=>d.km===S.km)?.entrega||RANGOS[ri(S.km)]}</span>`:''}
+    </div>
+    <input type="text" placeholder="🔍 Buscar ciudad o estado..." value="${S.busqDest}"
+      style="margin-bottom:8px" oninput="S.busqDest=this.value;render()">
+    <div class="dest-grid">${destBtns}</div>
+    <!-- Servicios incluidos -->
+    <div style="border-top:1px solid #eee;padding-top:10px;margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:#888;font-weight:600;text-transform:uppercase">Incluidos en precio:</span>
+      <span style="font-size:13px;color:#555"><span style="color:#FF5C1E">✓</span> CRE recolección</span>
+      <span style="font-size:13px;color:#555"><span style="color:#FF5C1E">✓</span> EAD entrega a domicilio</span>
+      <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#555;margin-left:auto">
+        <span style="color:#FF5C1E">✓</span> Seguro Zurich <span style="color:#888;font-size:11px">($${SEG_FIJO} fijo por guía · siempre incluido)</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Líneas del pedido -->
+  <div class="card">
+    <div class="section-label" style="margin-bottom:8px">Líneas del pedido (manual)</div>
+    <div class="pedido-header">
+      <span>#</span><span>Medida</span><span>Cant.</span><span>Dim. L×A×H (cm)</span>
+      <span style="text-align:center">P.unit.</span><span style="text-align:center">P.tot.</span><span></span>
+    </div>
+    ${S.rows.map((r,i)=>{
+      const inf=r.medida?FIND(r.medida):null;
+      return`<div class="pedido-row">
+        <span class="rnum">${i+1}</span>
+        <div>
+          <select onchange="upRow(${r.id},'medida',this.value)" ${r.desc?`title="${r.desc}"`:''}>
+            <option value="">— Seleccionar —</option>
+            ${MEDIDAS.map(m=>`<option value="${m}"${r.medida===m?' selected':''}>${m}</option>`).join('')}
+          </select>
+          ${r.desc?`<div style="font-size:10px;color:#888;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.desc}</div>`:''}
+        </div>
+        <input type="number" min="1" max="999" value="${r.cant}" style="text-align:center;${r.cant>15?'border-color:#EF9F27;background:#FAEEDA':''}" onchange="upRow(${r.id},'cant',+this.value)">
+        ${inf?`<div class="dbadge">${inf.l}×${inf.l}×${inf.a}</div>`:`<div class="dbadge" style="color:#ccc">—</div>`}
+        ${inf?`<div class="wbadge">${inf.p}kg</div>`:`<div></div>`}
+        ${inf?`<div class="wbadge">${(inf.p*r.cant).toFixed(1)}kg</div>`:`<div></div>`}
+        <button class="btn btn-sm btn-icon" onclick="delRow(${r.id})">✕</button>
+      </div>`;
+    }).join('')}
+    <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="addRow()">+ Agregar medida</button>
+  </div>
+
+  ${S.computando
+    ?`<div style="display:flex;align-items:center;gap:10px;padding:12px;font-size:13px;color:#888"><span class="spin">⟳</span> Calculando combinación óptima…</div>`
+    :`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="calcular()">⟳ Calcular paquetes →</button>
+      <button class="btn btn-secondary" onclick="limpiar()">Nuevo pedido</button>
+      <span style="margin-left:auto;font-size:13px;color:#888">${totalL} pza${totalL!==1?'s':''} · ${totalP.toFixed(1)} kg</span>
+    </div>`}`;
+}
+
+// ─── RENDER PAQUETES ─────────────────────────────────────────────────────────
+function renderPaquetes(){
+  if(!S.pkts||!S.pkts.length)return`<div style="text-align:center;padding:3rem;color:#aaa">Captura el pedido y presiona "Calcular paquetes"</div>`;
+  const totalBase=S.pkts.reduce((s,p)=>s+p.costoBase,0);
+  const seguro=S.seguro?SEG_FIJO:0;
+  const subtotal=totalBase+seguro;
+  const totalIVA=subtotal*IVA;
+  const totalL=S.pkts.reduce((s,p)=>s+p.llantas.length,0);
+  const totalP=S.pkts.reduce((s,p)=>s+p.pr,0);
+  const hayT7=S.pkts.some(p=>p.t.n==='T7');
+
+  const entrega=DESTINOS.find(d=>d.km===S.km)?.entrega||'—';
+  const pktsHtml=S.pkts.map((p,i)=>{
+    const chips=contarSKUs(p.llantas).map(([d,n])=>`<span class="chip" title="${d}">${n}× ${d}</span>`).join('');
+    const pc=pillClass(p.t.n);
+    return`<div class="pkt-wrap">
+      <div class="pkt-head">
+        <span class="pkt-title">Paquete ${i+1} · ${p.llantas.length} pza${p.llantas.length!==1?'s':''}${p.llantas.some(l=>l.t==='MOUSSE')?' 📦 MOUSSE':''}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="pill ${pc}">${p.t.n}</span>
+          <span style="font-weight:600">$${p.costoBase.toFixed(0)}</span>
+        </div>
+      </div>
+      <div class="pkt-body">
+        <div class="chips">${chips}</div>
+        <div class="dims-grid">
+          <div class="dim"><div class="dim-lbl">Largo</div><div class="dim-val">${p.mxL}cm</div></div>
+          <div class="dim"><div class="dim-lbl">Ancho</div><div class="dim-val">${p.mxL}cm</div></div>
+          <div class="dim"><div class="dim-lbl">Alto</div><div class="dim-val">${p.altoReal}cm</div></div>
+          <div class="dim"><div class="dim-lbl">Volumen</div><div class="dim-val">${p.vol.toFixed(4)}m³</div></div>
+          <div class="dim"><div class="dim-lbl">P.Real</div><div class="dim-val">${p.pr.toFixed(1)}kg</div></div>
+          <div class="dim"><div class="dim-lbl">Vol×200</div><div class="dim-val">${p.pv.toFixed(1)}kg</div></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const resumenRows=S.pkts.map((p,i)=>`<tr>
+    <td>PKT ${i+1}</td><td style="text-align:center">${p.llantas.length}</td>
+    <td>${p.mxL}×${p.mxL}×${p.altoReal}</td>
+    <td class="r">${p.pr.toFixed(1)}kg</td><td class="r">${p.pv.toFixed(1)}kg</td>
+    <td><span class="pill ${pillClass(p.t.n)}" style="font-size:10px">${p.t.n}</span></td>
+    <td class="r">$${p.costoBase.toFixed(0)}</td>
+  </tr>`).join('');
+
+  return`
+  <div class="alert alert-ok"><span>✓</span><span>Motor óptimo — distribución de menor costo. Destino: ${RANGOS[ri(S.km)]} (${S.km} km) &nbsp;·&nbsp; <strong>Entrega estimada: ${entrega}</strong></span></div>
+  ${hayT7?`<div class="alert alert-warn"><span>⚠</span><span>Uno o más paquetes exceden T6 — aplica Tarifa 7 (mayor entre peso×$/kg y volumen×$/m³).</span></div>`:''}
+  <div class="metrics">
+    <div class="metric"><div class="metric-label">Paquetes</div><div class="metric-val">${S.pkts.length}</div></div>
+    <div class="metric"><div class="metric-label">Piezas</div><div class="metric-val">${totalL}</div></div>
+    <div class="metric"><div class="metric-label">Peso total</div><div class="metric-val">${totalP.toFixed(1)}kg</div></div>
+    <div class="metric metric-best"><div class="metric-label">Total con IVA</div><div class="metric-val">$${totalIVA.toFixed(2)}</div><div class="metric-sub">Base $${subtotal.toFixed(0)} · IVA $${(subtotal*0.16).toFixed(0)}</div></div>
+  </div>
+  ${pktsHtml}
+  <hr class="div">
+  <div class="card" style="margin-bottom:0">
+    <div class="section-label" style="margin-bottom:8px">Resumen del costo</div>
+    <div style="overflow-x:auto">
+      <table class="tbl">
+        <thead><tr><th>Paquete</th><th style="text-align:center">Pzas.</th><th>L×A×H (cm)</th><th class="r">P.real</th><th class="r">P.vol.</th><th>Tarifa</th><th class="r">Costo</th></tr></thead>
+        <tbody>${resumenRows}
+          <tr class="total-row"><td colspan="3">Subtotal paquetes</td><td class="r">${totalP.toFixed(1)}kg</td><td class="r">—</td><td>—</td><td class="r">$${totalBase.toFixed(2)}</td></tr>
+          <tr><td colspan="6" style="color:#FF5C1E;font-size:11px">✓ CRE+EAD y seguro incluidos · Precio final por paquete</td><td></td></tr>
+          ${S.seguro?`<tr><td colspan="6" style="color:#888">Seguro Zurich (fijo por guía)</td><td class="r">$${SEG_FIJO.toFixed(2)}</td></tr>`:''}
+          ${S.zp?`<tr><td colspan="6" style="color:#888">Zona Plus (${S.pkts.length} × $${ZP})</td><td class="r">$${(ZP*S.pkts.length).toFixed(0)}</td></tr>`:''}
+          <tr><td colspan="6" style="color:#888">Subtotal</td><td class="r">$${subtotal.toFixed(2)}</td></tr>
+          <tr><td colspan="6" style="color:#888">IVA 16%</td><td class="r">$${(subtotal*0.16).toFixed(2)}</td></tr>
+          <tr><td colspan="6" style="font-weight:600;color:#D94A0F">Total con IVA</td><td class="r" style="font-weight:600;color:#D94A0F">$${totalIVA.toFixed(2)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="setVista('envio')">Continuar → Datos del envío</button>
+      <button class="btn btn-secondary btn-sm" onclick="setVista('pedido')">← Modificar pedido</button>
+      <button class="btn btn-secondary btn-sm" onclick="limpiar()">Nuevo pedido</button>
+    </div>
+  </div>`;
+}
+
+// ─── RENDER ENVÍO ────────────────────────────────────────────────────────────
+function renderEnvio(){
+  if(!S.pkts||!S.pkts.length)return`<div style="text-align:center;padding:3rem;color:#aaa">Primero calcula los paquetes.</div>`;
+  const guiaRows=S.pkts.map((p,i)=>{
+    const contenido=contarSKUs(p.llantas).map(([d,n])=>`${n}× ${d}`).join(', ');
+    const pc=pillClass(p.t.n);
+    return`<div class="guide-row">
+      <div>
+        <div class="guide-label">PKT ${i+1} <span class="pill ${pc}" style="font-size:10px;margin-left:4px">${p.t.n}</span></div>
+        <div style="font-size:11px;color:#888;margin-top:2px">${contenido}</div>
+      </div>
+      <input type="text" placeholder="Número de guía Paquetexpress" value="${S.guias[i]||''}" onchange="S.guias[${i}]=this.value">
+    </div>`;
+  }).join('');
+
+  return`
+  <div class="card">
+    <div class="section-label">Datos del envío</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">Folio / Número de pedido</label>
+        <input type="text" placeholder="Ej. PED-001" value="${S.envio.folio}" onchange="S.envio.folio=this.value">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Teléfono del destinatario</label>
+        <input type="text" placeholder="55 1234 5678" value="${S.envio.tel}" onchange="S.envio.tel=this.value">
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">Nombre del destinatario</label>
+      <input type="text" placeholder="Nombre completo o razón social" value="${S.envio.dest}" onchange="S.envio.dest=this.value">
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">Dirección de entrega</label>
+      <input type="text" placeholder="Calle, número, colonia" value="${S.envio.dir}" onchange="S.envio.dir=this.value">
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">Ciudad / Estado / CP</label>
+      <input type="text" placeholder="Ej. Aguascalientes, Ags, CP 20000" value="${S.envio.ciudad}" onchange="S.envio.ciudad=this.value">
+    </div>
+  </div>
+  <div class="card">
+    <div class="section-label">Números de guía por paquete</div>
+    <div style="font-size:12px;color:#888;margin-bottom:10px">Ingresa el número de guía que asignó Paquetexpress a cada paquete.</div>
+    ${guiaRows}
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="setVista('packing')">Ver Packing List →</button>
+    <button class="btn btn-secondary" onclick="setVista('paquetes')">← Paquetes</button>
+  </div>`;
+}
+
+// ─── RENDER PACKING LIST ─────────────────────────────────────────────────────
+function renderPacking(){
+  if(!S.pkts||!S.pkts.length)return`<div style="text-align:center;padding:3rem;color:#aaa">Primero calcula los paquetes.</div>`;
+  const faltaDato=!S.envio.dest&&!S.envio.folio;
+  const totalBase=S.pkts.reduce((s,p)=>s+p.costoBase,0);
+  const seg=S.seguro?SEG_FIJO:0;
+  const subtotal=totalBase+seg;
+
+  const pktsPreview=S.pkts.map((p,i)=>{
+    const contenidoLineas=contarSKUs(p.llantas).map(([d,n])=>{
+      return`<div style="font-size:12px;padding:2px 0;border-bottom:1px dotted #eee;display:flex;justify-content:space-between">
+        <span>${d}</span><span style="font-weight:600;margin-left:12px;white-space:nowrap">${n} pza${n>1?'s':''}</span>
+      </div>`;
+    }).join('');
+    const pc=pillClass(p.t.n);
+    return`<div class="pl-card">
+      <div class="pl-pkt-head">
+        <div style="font-weight:600;font-size:13px">Paquete ${i+1} &nbsp;<span class="pill ${pc}" style="font-size:10px">${p.t.n}</span></div>
+        <div style="font-size:13px;font-weight:600">$${p.costoBase.toFixed(0)}</div>
+      </div>
+      <div class="pl-pkt-body">
+        <div class="pl-row"><span style="color:#888">Guía</span><span style="font-weight:600;color:${S.guias[i]?'#1a1a18':'#aaa'}">${S.guias[i]||'—'}</span></div>
+        <div style="padding:4px 0;border-bottom:1px solid #eee">
+          <div style="font-size:11px;color:#888;margin-bottom:4px">Contenido</div>${contenidoLineas}
+        </div>
+        <div class="pl-row"><span style="color:#888">Dimensiones</span><span>${p.mxL}×${p.mxL}×${p.sumA} cm</span></div>
+        <div class="pl-row"><span style="color:#888">Peso real</span><span>${p.pr.toFixed(1)} kg</span></div>
+        <div class="pl-row"><span style="color:#888">Peso vol.</span><span>${p.pv.toFixed(1)} kg</span></div>
+        <div class="pl-row"><span style="color:#888">Volumen</span><span>${p.vol.toFixed(4)} m³</span></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return`
+  ${faltaDato?`<div class="alert alert-warn"><span>⚠</span><span>Faltan datos del envío. <button class="btn btn-sm" style="margin-left:8px" onclick="setVista('envio')">Completar →</button></span></div>`:''}
+  <div class="card" style="border-color:#FF5C1E">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:#FF5C1E">PACKING LIST</div>
+        <div style="font-size:12px;color:#888">Optimizador · Paquetexpress</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:13px;font-weight:600">Folio: ${S.envio.folio||'—'}</div>
+        <div style="font-size:12px;color:#888">Fecha: ${today()}</div>
+        <div style="font-size:12px;color:#888">${S.km} km · ${RANGOS[ri(S.km)]}${S.zp?' · Zona Plus':''}</div>
+      </div>
+    </div>
+    <hr class="div">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="font-size:11px;color:#888;font-weight:600;text-transform:uppercase;margin-bottom:4px">Destinatario</div>
+        <div style="font-weight:600">${S.envio.dest||'—'}</div>
+        <div style="font-size:12px;color:#555">${S.envio.dir||'—'}</div>
+        <div style="font-size:12px;color:#555">${S.envio.ciudad||'—'}</div>
+        ${S.envio.tel?`<div style="font-size:12px;color:#555">Tel: ${S.envio.tel}</div>`:''}
+      </div>
+      <div>
+        <div style="font-size:11px;color:#888;font-weight:600;text-transform:uppercase;margin-bottom:4px">Resumen</div>
+        <div style="font-size:12px">Paquetes: <strong>${S.pkts.length}</strong></div>
+        <div style="font-size:12px">Piezas: <strong>${S.pkts.reduce((s,p)=>s+p.llantas.length,0)}</strong></div>
+        <div style="font-size:12px">Subtotal: <strong>$${subtotal.toFixed(2)}</strong></div>
+        <div style="font-size:13px;color:#D94A0F;font-weight:600">Total c/IVA: $${(subtotal*IVA).toFixed(2)}</div>
+      </div>
+    </div>
+  </div>
+  ${pktsPreview}
+  <div class="card">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;text-align:center">
+      ${['Elaboró / Almacén','Recibió / Transportista','Fecha de entrega'].map(f=>`
+      <div>
+        <div style="font-size:11px;color:#888;margin-bottom:20px">${f}</div>
+        <div style="border-top:1px solid #ddd;padding-top:4px;font-size:11px;color:#aaa">Nombre y firma</div>
+      </div>`).join('')}
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+    <button class="btn btn-primary" onclick="generarPackingPDF()">⬇ Descargar PDF</button>
+    <button class="btn btn-green-outline" onclick="window.print()">🖨 Imprimir</button>
+    <button class="btn btn-secondary" onclick="setVista('envio')">← Editar datos</button>
+    <button class="btn btn-secondary" onclick="limpiar()">Nuevo pedido</button>
+  </div>`;
+}
+
+// ─── MAIN RENDER ─────────────────────────────────────────────────────────────
+function render(){
+  const root=document.getElementById('root');
+  const tabs=[
+    {id:'pedido',label:'Pedido',num:null},
+    {id:'paquetes',label:'Paquetes',num:S.pkts?S.pkts.length:null},
+    {id:'envio',label:'Envío',num:null},
+    {id:'packing',label:'Packing List',num:null},
+  ];
+  const disabled=!S.pkts;
+  const tabsHtml=tabs.map(t=>{
+    const isDisabled=t.id!=='pedido'&&disabled;
+    const cls=`tab${S.vista===t.id?' active':''}${isDisabled?' disabled':''}`;
+    const onclick=isDisabled?'':'onclick="setVista(\''+t.id+'\')"';
+    const num=t.num?`<span class="tab-num">${t.num}</span>`:'';
+    return`<button class="${cls}" ${onclick}>${t.label}${num}</button>`;
+  }).join('');
+  let content='';
+  if(S.vista==='pedido')content=renderPedido();
+  else if(S.vista==='paquetes')content=renderPaquetes();
+  else if(S.vista==='envio')content=renderEnvio();
+  else if(S.vista==='packing')content=renderPacking();
+  root.innerHTML=`<div class="tabs">${tabsHtml}</div>${content}`;
+}
+
+render();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PUENTE CON EL PORTAL LLANTY.APP — CONSERVAR ESTE BLOQUE
+     Si actualizas el optimizador, pega este bloque completo al final
+     del archivo nuevo, antes de </body>. Sin él, el portal no puede
+     guardar/reabrir packing lists ni inyectar destinos guardados.
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+window.__LLANTY = {
+  version: 1,
+  // El portal lee el estado completo para guardarlo con folio.
+  getEstado(){
+    return {
+      rows: S.rows.filter(r=>r.medida).map(r=>({medida:r.medida,cant:r.cant,desc:r.desc||''})),
+      km:S.km, zp:!!S.zp, seguro:!!S.seguro,
+      destNombre:S.destNombre||'', envio:{...S.envio},
+      calculado: !!(S.pkts&&S.pkts.length),
+    };
+  },
+  // El portal restaura un estado guardado (REABRIR del historial).
+  setEstado(e){
+    try{
+      if(!e) return false;
+      const rows=(e.rows&&e.rows.length)?e.rows:[{medida:'',cant:1}];
+      S.rows=rows.map((r,i)=>({id:i+1,medida:String(r.medida||''),cant:Math.max(1,parseInt(r.cant)||1),desc:r.desc||''}));
+      S.nid=S.rows.length+1;
+      if(e.km) S.km=Math.max(1,parseInt(e.km)||S.km);
+      S.zp=!!e.zp;
+      if(typeof e.seguro==='boolean') S.seguro=e.seguro;
+      S.destNombre=e.destNombre||'';
+      if(e.envio) S.envio={folio:'',dest:'',dir:'',ciudad:'',tel:'',...e.envio};
+      S.pkts=null; S.pdfPreview=null; S.vista='pedido'; render();
+      if(e.calculado) calcular();
+      return true;
+    }catch(err){ return false; }
+  },
+  // El portal inyecta un destino guardado (km + datos de envío) sin
+  // tocar las llantas ya capturadas.
+  setDestino(d){
+    try{
+      if(!d) return false;
+      if(d.km) S.km=Math.max(1,parseInt(d.km)||S.km);
+      S.destNombre=d.nombre||S.destNombre;
+      S.envio={...S.envio,
+        dest:d.nombre||S.envio.dest,
+        dir:d.dir||S.envio.dir,
+        ciudad:d.ciudad||S.envio.ciudad,
+        tel:d.tel||S.envio.tel};
+      render();
+      return true;
+    }catch(err){ return false; }
+  },
+};
+</script>
+</body>
+</html>

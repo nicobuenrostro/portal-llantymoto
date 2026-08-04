@@ -1,4 +1,4 @@
- import { useState, useEffect, useMemo, useRef, Component } from "react";
+import { useState, useEffect, useMemo, useRef, Component } from "react";
 import { initializeApp, deleteApp } from "firebase/app";
 import {
   getFirestore, collection, getDocs, doc, setDoc,
@@ -45,6 +45,8 @@ const COL = {
   cotizaciones: "cotizaciones",
   transitos:    "transitos",
   folios:       "folios",
+  packing:      "packing_lists", // historial del optimizador (solo internos)
+  destinos:     "destinos",      // catálogo compartido de destinos (folio D-0001)
   bitacora:     "bitacora",
 };
 
@@ -131,7 +133,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.0 · reabrir cotización · 03ago2026";
+const VERSION = "v3.2 · optimizador completo · 04ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1139,6 +1141,331 @@ function CartPanel({cart,setCart,session,onClose}){
 }
 
 // ── Historial ─────────────────────────────────────────────────
+// ── Optimizador de paquetes ───────────────────────────────────
+// El HTML del optimizador vive en public/optimizador.html y NO se
+// modifica: para actualizarlo basta reemplazar ese archivo y publicar.
+// Como el iframe es del MISMO dominio, el portal puede leer lo que la
+// herramienta pintó y guardarlo en el historial sin tocar su código.
+function PanelOptimizador({session,mob}){
+  const [sub,setSub]=useState("tool");
+  const [msg,setMsg]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [items,setItems]=useState(null);      // historial
+  const [destinos,setDestinos]=useState(null); // catálogo compartido
+  const [busca,setBusca]=useState("");
+  const [expanded,setExpanded]=useState(null);
+  const [editando,setEditando]=useState(null); // {id,folio} al reabrir
+  const [dialogo,setDialogo]=useState(null);   // {modo:"nuevo"|"actualizar", destino:""}
+  const frameRef=useRef(null);
+  const admin=isAdminRole(session);
+
+  const puente=()=>frameRef.current?.contentWindow?.__LLANTY||null;
+  const normaliza=t=>safe(t).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/\s+/g," ").trim();
+
+  // ── folios ──────────────────────────────────────────────────
+  async function siguienteFolioPacking(){
+    const uid=safe(session?.id)||"unknown";
+    const ref=doc(db,COL.folios,uid);
+    const snap=await getDoc(ref);
+    const next=(snap.exists()?safeNum(snap.data().ultimo_packing):0)+1;
+    await setDoc(ref,{ultimo_packing:next,usuario:safe(session?.usuario)},{merge:true});
+    const prefix=safe(session?.usuario).substring(0,3).toUpperCase()||"USR";
+    return `PK-${prefix}-${String(next).padStart(4,"0")}`;
+  }
+  // Folio de DESTINO: consecutivo GLOBAL (D-0001), compartido por todo
+  // el equipo, para que un destino repetido conserve siempre su número.
+  async function folioDestinoGlobal(){
+    const ref=doc(db,COL.folios,"__destinos");
+    const snap=await getDoc(ref);
+    const next=(snap.exists()?safeNum(snap.data().ultimo):0)+1;
+    await setDoc(ref,{ultimo:next},{merge:true});
+    return `D-${String(next).padStart(4,"0")}`;
+  }
+
+  // ── destinos compartidos ────────────────────────────────────
+  async function cargarDestinos(){
+    try{
+      const qs=await getDocs(collection(db,COL.destinos));
+      setDestinos(qs.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es")));
+    }catch(e){ setDestinos([]); }
+  }
+  useEffect(()=>{ cargarDestinos();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // Registra el destino si es nuevo; devuelve {folio,nombre}.
+  async function resolverDestino(nombre,estado){
+    const nom=safe(nombre).trim();
+    if(!nom) return null;
+    const norm=normaliza(nom);
+    const ya=(destinos||[]).find(d=>normaliza(d.nombre)===norm);
+    if(ya) return {folio:safe(ya.folio),nombre:safe(ya.nombre)};
+    const folio=await folioDestinoGlobal();
+    const id=`${Date.now()}_${norm.replace(/[^a-z0-9]/g,"").slice(0,20)}`;
+    const nuevoDest={folio,nombre:nom,nombre_norm:norm,
+      km:safeNum(estado?.km)||0,
+      dir:safe(estado?.envio?.dir),ciudad:safe(estado?.envio?.ciudad),tel:safe(estado?.envio?.tel),
+      uid:safe(session?.id),creado:new Date().toISOString()};
+    await setDoc(doc(db,COL.destinos,id),nuevoDest);
+    setDestinos(prev=>[...(prev||[]),{id,...nuevoDest}].sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es")));
+    return {folio,nombre:nom};
+  }
+
+  function inyectarDestino(id){
+    const d=(destinos||[]).find(x=>x.id===id);
+    if(!d) return;
+    const br=puente();
+    if(br?.setDestino){ br.setDestino(d); setMsg(`✅ Destino ${d.folio} · ${d.nombre} cargado en la herramienta (${d.km||"?"} km).`); }
+    else setMsg("❌ La herramienta aún no carga o le falta el bloque puente.");
+  }
+
+  // ── capturar / guardar ──────────────────────────────────────
+  function capturar(){
+    const docu=frameRef.current?.contentDocument;
+    if(!docu) return null;
+    const contenido=safe((docu.getElementById("root")||docu.body)?.innerText).trim();
+    const br=puente();
+    const estado=br?.getEstado?br.getEstado():null;
+    return {contenido,estado};
+  }
+
+  function abrirDialogo(modo){
+    const cap=capturar();
+    if(!cap){setMsg("❌ No pude leer la herramienta. Recarga la página.");return;}
+    if(!cap.estado?.calculado&&(cap.contenido.length<60||!/paquete|pkt|bulto|caja|total/i.test(cap.contenido))){
+      setMsg("❌ Primero genera un cálculo en la herramienta.");return;
+    }
+    const sugerido=safe(cap.estado?.envio?.dest)||safe(cap.estado?.destNombre);
+    setDialogo({modo,destino:sugerido,cap});
+  }
+
+  async function confirmarGuardar(){
+    const {modo,destino,cap}=dialogo;
+    try{
+      setSaving(true);setMsg("");
+      const dest=await resolverDestino(destino,cap.estado);
+      const lineas=cap.contenido.split("\n").map(l=>l.trim()).filter(Boolean);
+      const base={
+        uid:safe(session?.id),usuario:safe(session?.usuario),
+        vendedor:safe(session?.nombre)||safe(session?.usuario),
+        destino:dest||null,
+        resumen:[dest?`📍 ${dest.folio} ${dest.nombre}`:null,...lineas.slice(0,2)].filter(Boolean).join("  ·  ").slice(0,180),
+        contenido:cap.contenido.slice(0,90000),
+        estado:cap.estado||null,
+      };
+      if(modo==="actualizar"&&editando){
+        await setDoc(doc(db,COL.packing,editando.id),{...base,
+          folio:editando.folio,fecha_mod:new Date().toISOString(),
+          modificado_por:safe(session?.nombre)||safe(session?.usuario)},{merge:true});
+        setMsg(`✅ ${editando.folio} actualizado con el nuevo cálculo.`);
+        setEditando(null);
+      }else{
+        const folio=await siguienteFolioPacking();
+        const id=`${Date.now()}_${safe(session?.id)||"x"}`;
+        await setDoc(doc(db,COL.packing,id),{...base,folio,fecha:new Date().toISOString()});
+        setMsg(`✅ Guardado como ${folio}${dest?` · destino ${dest.folio}`:""}.`);
+      }
+      setItems(null);setDialogo(null);
+    }catch(e){ setMsg("❌ No se pudo guardar: "+(e?.message||e)); }
+    finally{ setSaving(false); }
+  }
+
+  // ── historial ───────────────────────────────────────────────
+  async function cargarHistorial(){
+    try{
+      const qs=await getDocs(collection(db,COL.packing));
+      setItems(qs.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>safe(b.fecha_mod||b.fecha).localeCompare(safe(a.fecha_mod||a.fecha))));
+    }catch(e){ setItems([]); }
+  }
+  useEffect(()=>{ if(sub==="hist"&&items===null) cargarHistorial();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[sub]);
+
+  function reabrir(it){
+    if(!it.estado){setMsg("❌ Este registro es de la versión anterior y solo se puede consultar o copiar.");return;}
+    setSub("tool");
+    setEditando({id:it.id,folio:it.folio});
+    // el iframe puede seguir cargando: reintenta hasta 5s
+    let intentos=0;
+    const timer=setInterval(()=>{
+      const br=puente();
+      if(br?.setEstado&&br.setEstado(it.estado)){
+        clearInterval(timer);
+        setMsg(`✏️ Editando ${it.folio}. Modifica lo necesario y usa ACTUALIZAR (mismo folio) o GUARDAR COMO NUEVO.`);
+      }else if(++intentos>25){ clearInterval(timer); setMsg("❌ No pude cargar el estado en la herramienta. Recarga la página."); setEditando(null); }
+    },200);
+  }
+
+  function imprimirSnapshot(it){
+    const w=window.open("","_blank");
+    if(!w){setMsg("❌ El navegador bloqueó la ventana de impresión.");return;}
+    w.document.write(`<html><head><title>${safe(it.folio)}</title><style>
+      body{font-family:monospace;font-size:12px;line-height:1.5;padding:24px;white-space:pre-wrap}
+      h2{font-family:sans-serif;margin:0 0 4px}
+      .m{color:#666;font-family:sans-serif;font-size:11px;margin-bottom:14px}
+    </style></head><body><h2>${safe(it.folio)}</h2>
+    <div class="m">${safe(it.vendedor)} · ${safe(it.fecha).slice(0,16).replace("T"," ")}${it.destino?` · Destino ${safe(it.destino.folio)} ${safe(it.destino.nombre)}`:""}${it.fecha_mod?` · modificado ${safe(it.fecha_mod).slice(0,16).replace("T"," ")}`:""}</div>
+    ${safe(it.contenido).replace(/&/g,"&amp;").replace(/</g,"&lt;")}</body></html>`);
+    w.document.close();w.focus();w.print();
+  }
+
+  function copiar(texto){
+    try{ navigator.clipboard.writeText(texto); setMsg("✅ Copiado al portapapeles."); }
+    catch(e){
+      const ta=document.createElement("textarea");
+      ta.value=texto;document.body.appendChild(ta);ta.select();
+      document.execCommand("copy");document.body.removeChild(ta);
+      setMsg("✅ Copiado al portapapeles.");
+    }
+  }
+  async function eliminar(it){
+    if(!admin)return;
+    if(!window.confirm(`¿Eliminar ${it.folio} del historial?`))return;
+    await deleteDoc(doc(db,COL.packing,it.id));
+    setItems(prev=>prev.filter(x=>x.id!==it.id));
+  }
+
+  const filtrados=(items||[]).filter(it=>{
+    const q=busca.trim().toLowerCase();
+    if(!q)return true;
+    return [it.folio,it.vendedor,it.usuario,it.resumen,it.contenido,it.destino?.nombre,it.destino?.folio]
+      .some(v=>safe(v).toLowerCase().includes(q));
+  });
+
+  const botonSub=(k,lbl)=>(
+    <button onClick={()=>setSub(k)} style={{
+      background:sub===k?INK:"#fff",color:sub===k?"#fff":GRL,
+      border:"1px solid "+(sub===k?INK:BD),padding:"8px 16px",
+      borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:800,letterSpacing:1}}>{lbl}</button>
+  );
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:13,color:OR}}>OPTIMIZADOR DE PAQUETES</div>
+          <div style={{color:GRL,fontSize:11,marginTop:2}}>Herramienta interna. Los clientes no la ven.</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {botonSub("tool","HERRAMIENTA")}
+          {botonSub("hist","HISTORIAL")}
+          {sub==="tool"&&<a href="/optimizador.html" target="_blank" rel="noopener noreferrer"
+            style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:8,fontSize:11,fontWeight:700,textDecoration:"none"}}>
+            ABRIR EN PESTAÑA NUEVA ↗
+          </a>}
+        </div>
+      </div>
+
+      {msg&&<div style={{marginBottom:10,padding:"9px 12px",borderRadius:8,fontSize:12,fontWeight:600,
+        background:msg.startsWith("✅")||msg.startsWith("✏️")?"#ECFDF5":"#FEF2F2",
+        color:msg.startsWith("✅")||msg.startsWith("✏️")?"#065F46":"#B91C1C",
+        border:"1px solid "+(msg.startsWith("✅")||msg.startsWith("✏️")?"#A7F3D0":"#FECACA")}}>{msg}</div>}
+
+      {sub==="tool"&&<>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+          {/* destino guardado → se inyecta km + datos de envío */}
+          <select onChange={e=>{if(e.target.value)inyectarDestino(e.target.value);e.target.value="";}}
+            defaultValue="" style={{padding:"9px 10px",border:"1px solid "+BD,borderRadius:8,fontSize:12,background:"#fff",maxWidth:mob?"100%":360}}>
+            <option value="">📍 Cargar destino guardado…</option>
+            {(destinos||[]).map(d=><option key={d.id} value={d.id}>{d.folio} · {d.nombre}{d.km?` (${d.km} km)`:""}</option>)}
+          </select>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {editando&&<>
+              <button onClick={()=>abrirDialogo("actualizar")} disabled={saving} style={{
+                background:INK,color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,
+                cursor:"pointer",fontSize:12,fontWeight:800,letterSpacing:.5}}>
+                ✏️ ACTUALIZAR {editando.folio}
+              </button>
+              <button onClick={()=>{setEditando(null);setMsg("Edición cancelada. Un guardado ahora crearía folio nuevo.");}} style={{
+                background:"#fff",color:GRL,border:"1px solid "+BD,padding:"10px 12px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:700}}>
+                CANCELAR
+              </button>
+            </>}
+            <button onClick={()=>abrirDialogo("nuevo")} disabled={saving} style={{
+              background:OR,color:"#fff",border:"none",padding:"10px 18px",borderRadius:8,
+              cursor:saving?"wait":"pointer",fontSize:12,fontWeight:800,letterSpacing:1,opacity:saving?.7:1}}>
+              💾 {editando?"GUARDAR COMO NUEVO":"GUARDAR EN HISTORIAL"}
+            </button>
+          </div>
+        </div>
+        <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",background:"#fff"}}>
+          <iframe ref={frameRef} src="/optimizador.html" title="Optimizador de paquetes"
+            style={{width:"100%",height:mob?"68vh":"78vh",border:"none",display:"block"}}/>
+        </div>
+      </>}
+
+      {sub==="hist"&&<div>
+        <input value={busca} onChange={e=>setBusca(e.target.value)}
+          placeholder="Buscar por folio, vendedor, destino o contenido…"
+          style={{width:"100%",padding:"10px 12px",border:"1px solid "+BD,borderRadius:8,fontSize:16,outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+        {items===null&&<div style={{color:GRL,fontSize:12,padding:20,textAlign:"center"}}>Cargando historial…</div>}
+        {items!==null&&filtrados.length===0&&<div style={{color:GRL,fontSize:12,padding:20,textAlign:"center"}}>
+          {busca?"Nada coincide con la búsqueda.":"Aún no hay packing lists guardados. Genera uno en HERRAMIENTA y presiona GUARDAR EN HISTORIAL."}</div>}
+        {filtrados.map(it=>(
+          <div key={it.id} style={{border:"1px solid "+BD,borderRadius:10,background:"#fff",marginBottom:8,overflow:"hidden"}}>
+            <div onClick={()=>setExpanded(expanded===it.id?null:it.id)}
+              style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",flexWrap:"wrap"}}>
+              <div style={{minWidth:0}}>
+                <span style={{fontFamily:"monospace",fontWeight:800,color:OR,fontSize:13}}>{it.folio}</span>
+                {it.destino&&<span style={{fontFamily:"monospace",fontSize:11,color:"#1B4F72",background:"#EBF5FB",border:"1px solid #D4E6F1",padding:"2px 7px",borderRadius:10,marginLeft:8}}>📍 {safe(it.destino.folio)} {safe(it.destino.nombre)}</span>}
+                <span style={{color:"#333",fontSize:12,marginLeft:10,fontWeight:700}}>{safe(it.vendedor)}</span>
+                <span style={{color:GRL,fontSize:11,marginLeft:10}}>{safe(it.fecha).slice(0,10)} {safe(it.fecha).slice(11,16)}</span>
+                {it.fecha_mod&&<span style={{color:"#92400E",fontSize:10,marginLeft:8,background:"#FEF3C7",padding:"2px 6px",borderRadius:8}}>mod. {safe(it.fecha_mod).slice(0,10)}</span>}
+                <div style={{color:GRL,fontSize:11,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:mob?"78vw":640}}>{safe(it.resumen)}</div>
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <button onClick={e=>{e.stopPropagation();reabrir(it);}} disabled={!it.estado}
+                  title={it.estado?"Carga este packing en la herramienta para modificarlo":"Registro antiguo: solo consulta"}
+                  style={{background:"#fff",color:it.estado?OR:"#bbb",border:"1.5px solid "+(it.estado?OR:BD),padding:"6px 12px",borderRadius:6,cursor:it.estado?"pointer":"not-allowed",fontSize:11,fontWeight:700}}>REABRIR</button>
+                <button onClick={e=>{e.stopPropagation();imprimirSnapshot(it);}}
+                  style={{background:OR,color:"#fff",border:"none",padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>IMPRIMIR</button>
+                <button onClick={e=>{e.stopPropagation();copiar(safe(it.contenido));}}
+                  style={{background:"#fff",color:GRL,border:"1px solid "+BD,padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>COPIAR</button>
+                {admin&&<button onClick={e=>{e.stopPropagation();eliminar(it);}}
+                  style={{background:"#fff",color:"#B91C1C",border:"1px solid #FECACA",padding:"6px 10px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>✕</button>}
+                <span style={{color:GRL,fontSize:11}}>{expanded===it.id?"▲":"▼"}</span>
+              </div>
+            </div>
+            {expanded===it.id&&<pre style={{margin:0,padding:"12px 14px",borderTop:"1px solid "+BD,background:"#FAFAFA",
+              fontSize:11.5,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word",maxHeight:420,overflow:"auto"}}>{safe(it.contenido)}</pre>}
+          </div>
+        ))}
+      </div>}
+
+      {/* ── diálogo de destino al guardar ── */}
+      {dialogo&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+        onClick={()=>!saving&&setDialogo(null)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:12,padding:20,width:"100%",maxWidth:440,boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
+          <div style={{fontWeight:800,fontSize:13,color:OR,marginBottom:4}}>
+            {dialogo.modo==="actualizar"?`ACTUALIZAR ${editando?.folio}`:"GUARDAR PACKING"}
+          </div>
+          <div style={{color:GRL,fontSize:11,marginBottom:12}}>
+            El destino queda registrado con su número único (D-0001…). Si ya existe, se reutiliza su folio.
+          </div>
+          <label style={{fontSize:10,color:GRL,letterSpacing:2}}>DESTINO</label>
+          <input list="destinos-lista" value={dialogo.destino} autoFocus
+            onChange={e=>setDialogo(d=>({...d,destino:e.target.value}))}
+            placeholder="Ej. Chapala, Jalisco"
+            style={{width:"100%",padding:"10px 12px",border:"1px solid "+BD,borderRadius:8,fontSize:16,outline:"none",boxSizing:"border-box",margin:"4px 0 14px"}}/>
+          <datalist id="destinos-lista">
+            {(destinos||[]).map(d=><option key={d.id} value={d.nombre}>{d.folio}{d.km?` · ${d.km} km`:""}</option>)}
+          </datalist>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setDialogo(null)} disabled={saving}
+              style={{background:"#fff",color:GRL,border:"1px solid "+BD,padding:"9px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>CANCELAR</button>
+            <button onClick={confirmarGuardar} disabled={saving}
+              style={{background:OR,color:"#fff",border:"none",padding:"9px 18px",borderRadius:8,cursor:saving?"wait":"pointer",fontSize:12,fontWeight:800,opacity:saving?.7:1}}>
+              {saving?"GUARDANDO…":"CONFIRMAR"}
+            </button>
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 function HistorialCotizaciones({session,onReabrir}){
   const [cots,setCots]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -2042,27 +2369,6 @@ function Portal(){
   const equipo   = users.filter(u=>isVendedor(u)).sort(porNombre);
   const clientes = users.filter(u=>!isVendedor(u)).sort(porNombre);
 
-  // El optimizador es un HTML independiente que vive en public/.
-  // Se muestra dentro del portal con un iframe: así no hay que
-  // portarlo a React y sigue funcionando exactamente igual.
-  const PanelOptimizador=(
-    <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
-        <div>
-          <div style={{fontWeight:800,fontSize:13,color:OR}}>OPTIMIZADOR DE PAQUETES</div>
-          <div style={{color:GRL,fontSize:11,marginTop:2}}>Herramienta interna. Los clientes no la ven.</div>
-        </div>
-        <a href="/optimizador.html" target="_blank" rel="noopener noreferrer"
-          style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:6,fontSize:11,fontWeight:700,textDecoration:"none"}}>
-          ABRIR EN PESTAÑA NUEVA ↗
-        </a>
-      </div>
-      <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",background:"#fff"}}>
-        <iframe src="/optimizador.html" title="Optimizador de paquetes"
-          style={{width:"100%",height:mob?"68vh":"78vh",border:"none",display:"block"}}/>
-      </div>
-    </div>
-  );
 
   // El mismo bloque sirve para el administrador y para el vendedor con
   // permiso. Plegado en el teléfono del admin (donde es una tarea de
@@ -2242,7 +2548,7 @@ function Portal(){
         {tab==="quotes"&&<HistorialCotizaciones session={session} onReabrir={reabrirCotizacion}/>}
         {tab==="arribos"&&<ProximosArribos session={session} mob={mob}/>}
 
-        {tab==="optimizador"&&PanelOptimizador}
+        {tab==="optimizador"&&<PanelOptimizador session={session} mob={mob}/>}
 
         {tab==="settings"&&<div style={{maxWidth:560}}>
           <div style={{background:CD,border:"1px solid "+BD,borderRadius:10,padding:24,marginBottom:16}}>
@@ -2371,7 +2677,7 @@ function Portal(){
         {tab==="arribos"&&vend&&<ProximosArribos session={session} mob={mob}/>}
 
         {/* vend blinda la pestaña: un cliente nunca la ve ni la abre. */}
-        {tab==="optimizador"&&vend&&PanelOptimizador}
+        {tab==="optimizador"&&vend&&<PanelOptimizador session={session} mob={mob}/>}
 
         {tab==="subir"&&puedeCatalogo(session)&&<div>
           <div style={{marginBottom:12}}>
