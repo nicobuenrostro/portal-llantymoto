@@ -133,7 +133,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.2.1 · fix pantalla optimizador · 04ago2026";
+const VERSION = "v3.4 · alta vendedor sin empresa · 04ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1942,7 +1942,24 @@ class RedDeSeguridad extends Component {
 function Portal(){
   const [session,setSession]=useState(null);
   const [view,setView]=useState("cargando");
-  const [tab,setTab]=useState("products");
+  // La pestaña activa vive también en la URL (#optimizador, #quotes…):
+  // así la recarga te deja donde estabas, el botón "atrás" regresa de
+  // sección en vez de sacarte del portal, y se pueden guardar links
+  // directos a una sección. Si el hash trae basura, cae a "products".
+  const TABS_URL=["products","vendedores","clients","quotes","arribos","optimizador","settings","catalogo"];
+  const hashTab=()=>{const h=window.location.hash.replace("#","");return TABS_URL.includes(h)?h:"products";};
+  const [tab,_setTab]=useState(hashTab);
+  const setTab=t=>{
+    _setTab(t);
+    if(t!==window.location.hash.replace("#",""))
+      window.history.pushState(null,"","#"+t);
+  };
+  useEffect(()=>{
+    const onPop=()=>_setTab(hashTab());
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
   const [users,setUsers]=useState([]);
   const [products,setProducts]=useState([]);
   const [prodLoad,setProdLoad]=useState(false);
@@ -2187,7 +2204,10 @@ function Portal(){
       if(!form.id&&users.find(u=>safe(u.usuario)===safe(form.usuario))){alert("Ese usuario ya existe.");setSaving(false);return;}
       // Alta: primero la cuenta en Firebase Auth; el id del perfil es su uid.
       const id=form.id||await crearCuentaAuth(form.usuario,safe(form.password));
-      const data={nombre:safe(form.nombre),empresa:safe(form.empresa),usuario:safe(form.usuario),lista:safe(form.lista),estatus:safe(form.estatus),rol:"client",
+      const esVendedorForm=safe(form.lista)==="VENDEDOR";
+      const data={nombre:safe(form.nombre),
+        empresa:esVendedorForm?EMPRESA.nombre:safe(form.empresa),
+        usuario:safe(form.usuario),lista:safe(form.lista),estatus:safe(form.estatus),rol:"client",
         // Solo tiene sentido en vendedores: si se le cambia la lista a
         // cliente, el permiso se apaga solo.
         puede_catalogo: safe(form.lista)==="VENDEDOR" && form.puede_catalogo===true,
@@ -2230,7 +2250,10 @@ function Portal(){
         <div style={{fontWeight:800,fontSize:14,color:esVend?"#9333ea":OR,marginBottom:18}}>{(isEdit?"EDITAR ":"NUEVO ")+(esVend?"VENDEDOR":"CLIENTE")}</div>
         <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:"0 14px"}}>
           <Inp label="NOMBRE *" value={form.nombre} onChange={e=>upd("nombre",e.target.value)}/>
-          <Inp label="EMPRESA" value={form.empresa||""} onChange={e=>upd("empresa",e.target.value)}/>
+          {/* Un vendedor siempre es de LlantyMoto: preguntar la empresa
+              solo estorba, así que el campo únicamente existe para
+              clientes y en vendedores se llena solo al guardar. */}
+          {!esVend&&<Inp label="EMPRESA" value={form.empresa||""} onChange={e=>upd("empresa",e.target.value)}/>}
           <Inp label="USUARIO *" value={form.usuario} onChange={e=>upd("usuario",e.target.value)}/>
           <Inp label={isEdit?"NUEVA CONTRASEÑA (vacío = no cambia)":"CONTRASEÑA *"} value={form.password} onChange={e=>upd("password",e.target.value)} type="password"/>
         </div>
