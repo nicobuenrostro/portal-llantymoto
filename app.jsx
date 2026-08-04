@@ -133,7 +133,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.2 · optimizador completo · 04ago2026";
+const VERSION = "v3.2.1 · fix pantalla optimizador · 04ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1336,8 +1336,8 @@ function PanelOptimizador({session,mob}){
 
   const botonSub=(k,lbl)=>(
     <button onClick={()=>setSub(k)} style={{
-      background:sub===k?INK:"#fff",color:sub===k?"#fff":GRL,
-      border:"1px solid "+(sub===k?INK:BD),padding:"8px 16px",
+      background:sub===k?DK:"#fff",color:sub===k?"#fff":GRL,
+      border:"1px solid "+(sub===k?DK:BD),padding:"8px 16px",
       borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:800,letterSpacing:1}}>{lbl}</button>
   );
 
@@ -1374,7 +1374,7 @@ function PanelOptimizador({session,mob}){
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {editando&&<>
               <button onClick={()=>abrirDialogo("actualizar")} disabled={saving} style={{
-                background:INK,color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,
+                background:DK,color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,
                 cursor:"pointer",fontSize:12,fontWeight:800,letterSpacing:.5}}>
                 ✏️ ACTUALIZAR {editando.folio}
               </button>
