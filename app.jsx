@@ -107,7 +107,7 @@ const MARCA_FONDO = { PLUSWAY:"#262626" };
 // apareciendo normal en el catálogo, en las búsquedas y en TODAS; solo
 // se agrupan bajo un chip "OTRAS" para no llenar la fila.
 // Para volver a mostrar una marca, quítala de esta lista.
-const MARCAS_OCULTAS = ["EUROGRIP","VIPAL","RAGE","URIDE","OTRA"];
+const MARCAS_OCULTAS = ["EUROGRIP","VIPAL","RAGE","URIDE","OTRA","RINOMAX"];
 // Orden fijo de los chips de marca. Lo que no esté aquí va después,
 // y el chip OTRAS siempre cierra la fila.
 const ORDEN_MARCAS = ["TERRA PLUS","OBOR","CUATRIMASTER","MITAS","TERRA MOUSSE","ANLAS","CEAT","PLUSWAY"];
@@ -136,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.8 · optimizador auto-guardado · 05ago2026";
+const VERSION = "v3.9.2 · rinomax en otras · 05ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -657,7 +657,7 @@ async function cargarLogoPDF(){
   }catch(e){ return null; }
 }
 
-async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNombre}){
+async function generarPDF({folio,session,items,nota,vigencia,descuento,paqueteria,clienteNombre}){
   const sfolio   = safe(folio)||"S/F";
   const snota    = safe(nota);
   const svig     = safe(vigencia)||"7 días naturales";
@@ -812,12 +812,14 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   // ── Totales + Tapatía Credit, lado a lado ──────────────────
   const bruto  = sitems.reduce((s,it)=>s+safeNum(it.precio)*safeNum(it.cantidad),0);
   const descMonto = sdesc>0?bruto*(sdesc/100):0;
-  const total  = bruto-descMonto;
+  // Paquetería: monto fijo con IVA, fuera del alcance del descuento.
+  const paqMonto  = safeNum(paqueteria);
+  const total  = bruto-descMonto+paqMonto;
   const base   = PRECIOS_CON_IVA ? total/(1+TASA_IVA) : total;
   const iva    = PRECIOS_CON_IVA ? total-base : total*TASA_IVA;
   const granTotal = PRECIOS_CON_IVA ? total : total+iva;
 
-  const nRows=(sdesc>0?4:3);
+  const nRows=3+(sdesc>0?1:0)+(paqMonto>0?1:0);
   const totH=nRows*6+11+4;                 // filas + banda TOTAL + aire
   const credH=CREDITO.activo?19+4:0;
   const contH=23;                          // tarjeta de contacto
@@ -887,6 +889,7 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,clienteNo
   };
   trow("Importe de lista (c/IVA)",money2(bruto));
   if(sdesc>0) trow(`Descuento (${sdesc}%)`,"-"+money2(descMonto),PDF.rojo,true);
+  if(paqMonto>0) trow("Paquetería",money2(paqMonto));
   trow("Subtotal sin IVA",money2(base));
   trow("IVA (16%)",money2(iva));
   ty+=2;
@@ -976,14 +979,18 @@ function CartPanel({cart,setCart,session,onClose}){
   const [nota,setNota]=useState("");
   const [vigencia,setVigencia]=useState("7 días naturales");
   const [descuento,setDescuento]=useState("");
+  const [paqueteria,setPaqueteria]=useState("");  // envío, monto fijo c/IVA
   const [clienteNombre,setClienteNombre]=useState("");
   const [generating,setGenerating]=useState(false);
   const [folioMsg,setFolioMsg]=useState("");
 
   const bruto=cart.reduce((s,it)=>s+safeNum(it.precio)*safeNum(it.cantidad),0);
   const descPct=clampDesc(descuento);
+  // El descuento aplica SOLO a productos. La paquetería es un monto
+  // fijo (con IVA) que se suma después, intocado por el descuento.
   const descMonto=vend&&descPct>0?bruto*(descPct/100):0;
-  const total=bruto-descMonto;
+  const paqMonto=vend?safeNum(paqueteria):0;
+  const total=bruto-descMonto+paqMonto;
   const base=PRECIOS_CON_IVA?total/(1+TASA_IVA):total;
   const iva=PRECIOS_CON_IVA?total-base:total*TASA_IVA;
   const granTotal=PRECIOS_CON_IVA?total:total+iva;
@@ -1017,11 +1024,11 @@ function CartPanel({cart,setCart,session,onClose}){
       setFolioMsg(`📄 ${folio} — generando PDF...`);
       const descReal=vend?descPct:0;
       const nombreCliente=safe(clienteNombre)||"Público en general";
-      await generarPDF({folio,session,items:cart,nota,vigencia,descuento:descReal,clienteNombre:nombreCliente});
+      await generarPDF({folio,session,items:cart,nota,vigencia,descuento:descReal,paqueteria:paqMonto,clienteNombre:nombreCliente});
       await setDoc(doc(db,COL.cotizaciones,folio),{
         folio,uid:safe(session?.id),usuario:safe(session?.usuario),nombre:safe(session?.nombre),
         empresa:safe(session?.empresa),items:cart,
-        bruto,descuento:descReal,base,iva,total:granTotal,
+        bruto,descuento:descReal,paqueteria:paqMonto,base,iva,total:granTotal,
         clienteNombre:nombreCliente,nota:safe(nota),vigencia:safe(vigencia),
         fecha:new Date().toISOString(),
       });
@@ -1126,6 +1133,14 @@ function CartPanel({cart,setCart,session,onClose}){
               {clampDesc(descuento)!==safeNum(descuento||0)&&<div style={{color:"#dc2626",fontSize:10,marginTop:3}}>El máximo permitido es 30%: se aplicará {clampDesc(descuento)}%.</div>}
             </div>
           )}
+          {vend&&(
+            <div style={{marginBottom:10}}>
+              <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>PAQUETERÍA / ENVÍO $ (IVA incluido · sin descuento)</div>
+              <input type="text" inputMode="decimal" placeholder="0" value={paqueteria}
+                onChange={e=>setPaqueteria(e.target.value.replace(/[^\d.]/g,""))}
+                style={{width:"100%",padding:"9px 11px",border:"1px solid "+BD,borderRadius:6,fontSize:12,outline:"none",background:"#fff",boxSizing:"border-box"}}/>
+            </div>
+          )}
           <div style={{marginBottom:12}}>
             <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>OBSERVACIONES</div>
             <textarea value={nota} onChange={e=>setNota(e.target.value)} rows={2} placeholder="Condiciones especiales, entrega, etc."
@@ -1141,6 +1156,9 @@ function CartPanel({cart,setCart,session,onClose}){
             </div>}
             {vend&&descPct>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#dc2626",marginBottom:3}}>
               <span>Descuento ({descPct}%):</span><span style={{fontWeight:600}}>-{money2(descMonto)}</span>
+            </div>}
+            {paqMonto>0&&<div style={{display:"flex",justifyContent:"space-between",color:GRL,marginBottom:3}}>
+              <span>Paquetería:</span><span style={{color:"#1a1a1a",fontWeight:600}}>{money2(paqMonto)}</span>
             </div>}
             <div style={{display:"flex",justifyContent:"space-between",color:GRL,marginBottom:3}}>
               <span>Subtotal sin IVA:</span><span style={{color:"#1a1a1a",fontWeight:600}}>{money2(base)}</span>
@@ -2850,3 +2868,4 @@ function Portal(){
 export default function App(){
   return <RedDeSeguridad><Portal/></RedDeSeguridad>;
 }
+
