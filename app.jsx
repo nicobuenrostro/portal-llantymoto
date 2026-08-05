@@ -136,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.7 · bodega chapala 03 · 05ago2026";
+const VERSION = "v3.8 · optimizador auto-guardado · 05ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1184,7 +1184,13 @@ function PanelOptimizador({session,mob}){
   const [destinos,setDestinos]=useState(null); // catálogo compartido
   const [busca,setBusca]=useState("");
   const [expanded,setExpanded]=useState(null);
-  const [editando,setEditando]=useState(null); // {id,folio} al reabrir
+  const [editando,_setEditando]=useState(null); // {id,folio} al reabrir
+  // refs espejo: el guardado automático corre desde un callback del
+  // iframe y sin esto leería estado congelado (closure vieja).
+  const editandoRef=useRef(null);
+  const destinosRef=useRef(null);
+  const guardandoRef=useRef(false);
+  const setEditando=v=>{editandoRef.current=v;_setEditando(v);};
   const [dialogo,setDialogo]=useState(null);   // {modo:"nuevo"|"actualizar", destino:""}
   const frameRef=useRef(null);
   const admin=isAdminRole(session);
@@ -1216,9 +1222,10 @@ function PanelOptimizador({session,mob}){
   async function cargarDestinos(){
     try{
       const qs=await getDocs(collection(db,COL.destinos));
-      setDestinos(qs.docs.map(d=>({id:d.id,...d.data()}))
-        .sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es")));
-    }catch(e){ setDestinos([]); }
+      const lista=qs.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es"));
+      destinosRef.current=lista; setDestinos(lista);
+    }catch(e){ destinosRef.current=[]; setDestinos([]); }
   }
   useEffect(()=>{ cargarDestinos();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1229,7 +1236,7 @@ function PanelOptimizador({session,mob}){
     const nom=safe(nombre).trim();
     if(!nom) return null;
     const norm=normaliza(nom);
-    const ya=(destinos||[]).find(d=>normaliza(d.nombre)===norm);
+    const ya=(destinosRef.current||destinos||[]).find(d=>normaliza(d.nombre)===norm);
     if(ya) return {folio:safe(ya.folio),nombre:safe(ya.nombre)};
     const folio=await folioDestinoGlobal();
     const id=`${Date.now()}_${norm.replace(/[^a-z0-9]/g,"").slice(0,20)}`;
@@ -1238,7 +1245,8 @@ function PanelOptimizador({session,mob}){
       dir:safe(estado?.envio?.dir),ciudad:safe(estado?.envio?.ciudad),tel:safe(estado?.envio?.tel),
       uid:safe(session?.id),creado:new Date().toISOString()};
     await setDoc(doc(db,COL.destinos,id),nuevoDest);
-    setDestinos(prev=>[...(prev||[]),{id,...nuevoDest}].sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es")));
+    const nueva=[...(destinosRef.current||[]),{id,...nuevoDest}].sort((a,b)=>safe(a.nombre).localeCompare(safe(b.nombre),"es"));
+    destinosRef.current=nueva; setDestinos(nueva);
     return {folio,nombre:nom};
   }
 
@@ -1258,6 +1266,58 @@ function PanelOptimizador({session,mob}){
     const br=puente();
     const estado=br?.getEstado?br.getEstado():null;
     return {contenido,estado};
+  }
+
+  // ── Guardado AUTOMÁTICO ─────────────────────────────────────
+  // Se dispara solo, cada vez que el usuario genera el packing list
+  // en la herramienta (llega a la vista PACKING con paquetes).
+  // Primera generación de la sesión → folio nuevo; las siguientes
+  // regeneraciones actualizan ESE MISMO folio (no se duplica).
+  // El destino se toma de los datos de envío: si ya existe en el
+  // catálogo compartido se reutiliza su folio D-, si no, se registra.
+  async function autoGuardar(){
+    if(guardandoRef.current) return;
+    guardandoRef.current=true;
+    try{
+      const cap=capturar();
+      if(!cap||!cap.estado?.calculado){guardandoRef.current=false;return;}
+      const nombreDest=safe(cap.estado?.envio?.dest)||safe(cap.estado?.destNombre);
+      const dest=nombreDest?await resolverDestino(nombreDest,cap.estado):null;
+      const lineas=cap.contenido.split("\n").map(l=>l.trim()).filter(Boolean);
+      const base={
+        uid:safe(session?.id),usuario:safe(session?.usuario),
+        vendedor:safe(session?.nombre)||safe(session?.usuario),
+        destino:dest||null,
+        resumen:[dest?`📍 ${dest.folio} ${dest.nombre}`:null,...lineas.slice(0,2)].filter(Boolean).join("  ·  ").slice(0,180),
+        contenido:cap.contenido.slice(0,90000),
+        estado:cap.estado||null,
+      };
+      const ed=editandoRef.current;
+      if(ed){
+        await setDoc(doc(db,COL.packing,ed.id),{...base,
+          folio:ed.folio,fecha_mod:new Date().toISOString(),
+          modificado_por:safe(session?.nombre)||safe(session?.usuario)},{merge:true});
+        setMsg(`✅ ${ed.folio} actualizado automáticamente${dest?` · destino ${dest.folio}`:""}.`);
+      }else{
+        const folio=await siguienteFolioPacking();
+        const id=`${Date.now()}_${safe(session?.id)||"x"}`;
+        await setDoc(doc(db,COL.packing,id),{...base,folio,fecha:new Date().toISOString()});
+        setEditando({id,folio}); // regeneraciones siguientes → mismo folio
+        setMsg(`✅ Packing guardado automáticamente como ${folio}${dest?` · destino ${dest.folio}`:""}.`);
+      }
+      setItems(null);
+    }catch(e){ setMsg("❌ El guardado automático falló: "+(e?.message||e)); }
+    finally{ guardandoRef.current=false; }
+  }
+
+  // Enganchar el aviso del puente cuando el iframe termina de cargar
+  function engancharPuente(){
+    let intentos=0;
+    const timer=setInterval(()=>{
+      const br=puente();
+      if(br){ br.onPacking=autoGuardar; clearInterval(timer); }
+      else if(++intentos>50) clearInterval(timer);
+    },200);
   }
 
   function abrirDialogo(modo){
@@ -1381,10 +1441,7 @@ function PanelOptimizador({session,mob}){
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {botonSub("tool","HERRAMIENTA")}
           {botonSub("hist","HISTORIAL")}
-          {sub==="tool"&&<a href="/optimizador.html" target="_blank" rel="noopener noreferrer"
-            style={{background:"#f0f0f0",color:GRL,border:"1px solid "+BD,padding:"8px 14px",borderRadius:8,fontSize:11,fontWeight:700,textDecoration:"none"}}>
-            ABRIR EN PESTAÑA NUEVA ↗
-          </a>}
+
         </div>
       </div>
 
@@ -1416,12 +1473,13 @@ function PanelOptimizador({session,mob}){
             <button onClick={()=>abrirDialogo("nuevo")} disabled={saving} style={{
               background:OR,color:"#fff",border:"none",padding:"10px 18px",borderRadius:8,
               cursor:saving?"wait":"pointer",fontSize:12,fontWeight:800,letterSpacing:1,opacity:saving?.7:1}}>
-              💾 {editando?"GUARDAR COMO NUEVO":"GUARDAR EN HISTORIAL"}
+              💾 {editando?"GUARDAR COMO NUEVO":"GUARDAR AHORA"}
             </button>
           </div>
         </div>
         <div style={{border:"1px solid "+BD,borderRadius:10,overflow:"hidden",background:"#fff"}}>
           <iframe ref={frameRef} src="/optimizador.html" title="Optimizador de paquetes"
+            onLoad={engancharPuente}
             style={{width:"100%",height:mob?"68vh":"78vh",border:"none",display:"block"}}/>
         </div>
       </>}
@@ -1980,6 +2038,14 @@ function Portal(){
   const hashTab=()=>{const h=window.location.hash.replace("#","");return TABS_URL.includes(h)?h:"products";};
   const [tab,_setTab]=useState(hashTab);
   const setTab=t=>{
+    // El optimizador SIEMPRE se trabaja en su propia pestaña del
+    // navegador (petición de Nicolás): más espacio y no interrumpe lo
+    // que se esté haciendo en el portal. La pestaña nueva abre el
+    // portal anclado en #optimizador, con HERRAMIENTA e HISTORIAL.
+    if(t==="optimizador"&&tab!=="optimizador"){
+      window.open(window.location.pathname+"#optimizador","_blank");
+      return;
+    }
     _setTab(t);
     if(t!==window.location.hash.replace("#",""))
       window.history.pushState(null,"","#"+t);
@@ -2062,8 +2128,13 @@ function Portal(){
   async function loadProducts(perfil){
     const u=perfil||session;
     setProdLoad(true);
+    // Se limpia ANTES de cargar: si la carga falla, la pantalla queda
+    // vacía con aviso, nunca mostrando en silencio datos de otra
+    // sesión (p.ej. el catálogo topado de un cliente de prueba).
+    setProducts([]);
     const d = esInterno(u) ? await fbGetProductos() : await fbGetCatalogoCliente(u?.lista);
-    if(d!==null)setProducts(d);
+    if(d!==null) setProducts(d);
+    else alert("No se pudo cargar el catálogo. Revisa tu conexión y presiona RECARGAR.");
     setProdLoad(false);
   }
   async function loadUsers(){setUserLoad(true);const d=await fbGetUsuarios();if(d!==null)setUsers(d);setUserLoad(false);}

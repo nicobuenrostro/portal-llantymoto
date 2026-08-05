@@ -1455,6 +1455,9 @@ window.__LLANTY = {
       return true;
     }catch(err){ return false; }
   },
+  // El portal se suscribe aquí: se dispara cada vez que el usuario
+  // llega al PACKING LIST con paquetes calculados (= lo generó).
+  onPacking: null,
   // El portal inyecta un destino guardado (km + datos de envío) sin
   // tocar las llantas ya capturadas.
   setDestino(d){
@@ -1472,6 +1475,22 @@ window.__LLANTY = {
     }catch(err){ return false; }
   },
 };
+// Aviso automático de "packing generado": se envuelve setVista para
+// detectar la entrada a la vista packing con paquetes ya calculados.
+(function(){
+  if(typeof setVista==='function'){
+    var _sv=setVista;
+    setVista=function(v){
+      var r=_sv.apply(this,arguments);
+      try{
+        if(v==='packing' && S.pkts && S.pkts.length && window.__LLANTY.onPacking){
+          window.__LLANTY.onPacking();
+        }
+      }catch(e){}
+      return r;
+    };
+  }
+})();
 </script>
 </body>
 </html>
