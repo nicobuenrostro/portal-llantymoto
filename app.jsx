@@ -116,8 +116,11 @@ const OTRAS = "__OTRAS__";
 const esOculta = m => MARCAS_OCULTAS.includes(marcaKey(m));
 
 // 4) Almacenes. La clave es el campo en Firestore; la etiqueta es lo que se ve.
-const ALMS   = ["tlajo","meli"];
-const ALMS_L = ["TLAJO","CHAPALA"];
+// tlajo = bodega SAP 500 · meli = bodega SAP 6 (Chapala 06) ·
+// chap3 = bodega SAP 3 (Chapala 03). El campo en Firestore no cambia
+// aunque cambie la etiqueta, para no migrar datos históricos.
+const ALMS   = ["tlajo","meli","chap3"];
+const ALMS_L = ["TLAJO","CHAP 06","CHAP 03"];
 
 // 5) En LlantyMoto los precios de lista YA INCLUYEN IVA.
 //    Si algún día cambias a precios netos, pon PRECIOS_CON_IVA = false.
@@ -133,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.4 · alta vendedor sin empresa · 04ago2026";
+const VERSION = "v3.7 · bodega chapala 03 · 05ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -182,6 +185,14 @@ const TOPE_STOCK = 30;
 // (cat_asociado, cat_distribuidor, cat_publico) se guardan YA topados
 // en 30 al subir el CSV, así que aunque un cliente lograra encender
 // este parámetro, el número real no existe en los datos que recibe.
+// Cámaras por costal y similares: llegan con las tres listas en 0 a
+// propósito. El portal no muestra $0: muestra "POR VOLUMEN" y no deja
+// meterlas a cotización (las condiciones se negocian con el asesor).
+const esVolumen = p => safeNum(p?.publico)===0 && safeNum(p?.distribuidor)===0 && safeNum(p?.asociado)===0;
+const VolBadge = ({grande}) => <span title="Precio especial por volumen: consulta condiciones con tu asesor"
+  style={{display:"inline-block",padding:grande?"4px 10px":"3px 8px",borderRadius:10,
+  background:"#FFF7ED",border:"1px solid #FDBA74",color:"#9A3412",
+  fontSize:grande?11:9.5,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>POR VOLUMEN</span>;
 const stockVis = (t,real=false) => (!real && t>=TOPE_STOCK) ? "+30" : String(t);
 // Píldora de existencia por almacén. Antes TLAJO y CHAPALA salían en
 // el mismo gris plano y no se distinguía nada de un vistazo; ahora
@@ -324,11 +335,15 @@ async function fbGetCatalogoCliente(lista){
       if(!Array.isArray(paquete)) paquete=[];
       paquete.forEach((it,i)=>{
         if(!Array.isArray(it)) return;
-        const [marca,medida,codigo,descripcion,precio,tlajo,meli,total]=it;
+        // Formato nuevo: 9 posiciones (con CHAP 03). Formato viejo: 8.
+        // El total siempre es la última posición, así ambos conviven.
+        const [marca,medida,codigo,descripcion,precio,tlajo,meli]=it;
+        const chap3=it.length>=9?it[7]:0;
+        const total=it[it.length-1];
         // Las tres listas apuntan al mismo número: el cliente solo tiene la suya.
         out.push({id:`${d.id}_${i}`,marca,medida,codigo,descripcion,
           asociado:safeNum(precio),distribuidor:safeNum(precio),publico:safeNum(precio),
-          tlajo:safeNum(tlajo),meli:safeNum(meli),total:safeNum(total)});
+          tlajo:safeNum(tlajo),meli:safeNum(meli),chap3:safeNum(chap3),total:safeNum(total)});
       });
     });
     return out;
@@ -993,6 +1008,9 @@ function CartPanel({cart,setCart,session,onClose}){
 
   async function generarCotizacion(){
     if(cart.length===0){setFolioMsg("❌ Agrega al menos un producto.");return;}
+    // Antes de gastar folio: ninguna partida pactada puede ir en $0.
+    const pactadaEnCero=cart.find(it=>it.tipoPrecio==="pactado"&&safeNum(it.precio)<=0);
+    if(pactadaEnCero){setFolioMsg(`❌ "${safe(pactadaEnCero.descripcion).slice(0,40)}…" tiene precio pactado en $0. Captúralo antes de generar.`);return;}
     setGenerating(true);setFolioMsg("Generando folio...");
     try{
       const folio=await getNextFolio();
@@ -1054,14 +1072,26 @@ function CartPanel({cart,setCart,session,onClose}){
                     <button onClick={()=>updCantidad(i,it.cantidad+1)} style={{background:"#f3f4f6",border:"none",padding:"4px 9px",cursor:"pointer",fontSize:14,fontWeight:700,color:"#374151"}}>＋</button>
                   </div>
                 </div>
-                {vend&&(
+                {vend&&(it.tipoPrecio==="pactado"?(
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{fontSize:9.5,fontWeight:800,color:"#9A3412",background:"#FFF7ED",border:"1px solid #FDBA74",padding:"3px 7px",borderRadius:10}}>PACTADO</span>
+                    <span style={{fontSize:11,color:GRL}}>$</span>
+                    <input type="text" inputMode="decimal" value={it.precio}
+                      onChange={e=>{
+                        const v=safeNum(e.target.value.replace(/[^\d.]/g,""));
+                        setCart(prev=>prev.map((x,j)=>j===i?{...x,precio:v,_publico:v,_distribuidor:v,_asociado:v}:x));
+                      }}
+                      title="Precio pactado con IVA incluido"
+                      style={{width:74,padding:"5px 8px",border:"1px solid #FDBA74",borderRadius:6,fontSize:12,fontWeight:700,outline:"none"}}/>
+                  </div>
+                ):(
                   <select value={it.tipoPrecio} onChange={e=>updPrecio(i,e.target.value)}
                     style={{padding:"5px 8px",border:"1px solid "+BD,borderRadius:6,fontSize:11,color:"#374151",outline:"none",background:"#fff"}}>
                     <option value="publico">Público</option>
                     <option value="distribuidor">Distribuidor</option>
                     <option value="asociado">Asociado</option>
                   </select>
-                )}
+                ))}
                 <div style={{marginLeft:"auto",textAlign:"right"}}>
                   <div style={{fontSize:11,color:GRL}}>P. Unit: <strong style={{color:"#1a1a1a"}}>{money2(it.precio)}</strong> <span style={{fontSize:9,color:"#bbb"}}>c/IVA</span></div>
                   <div style={{fontSize:13,fontWeight:800,color:OR}}>{money2(safeNum(it.precio)*safeNum(it.cantidad))}</div>
@@ -1853,7 +1883,7 @@ function CardProducto({p,vend,lista,onAdd}){
           {[["ASOCIADO",p.asociado,C_ASOC],["DISTRIBUIDOR",p.distribuidor,C_DIST],["PÚBLICO",p.publico,C_PUB]].map(([l,v,st])=>(
             <div key={l} style={{padding:"10px 6px",textAlign:"center",background:st.bg}}>
               <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.5,marginBottom:4}}>{l}</div>
-              <div style={{fontSize:16,fontWeight:800,color:st.c}}>{money(v)}</div>
+              {esVolumen(p)?<VolBadge/>:<div style={{fontSize:16,fontWeight:800,color:st.c}}>{money(v)}</div>}
             </div>
           ))}
         </div>
@@ -1863,7 +1893,7 @@ function CardProducto({p,vend,lista,onAdd}){
             <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.6}}>TU PRECIO ({safe(lista)||"PÚBLICO"})</div>
             <div style={{fontSize:10,color:GRL,marginTop:2}}>Almacén ppal: <strong style={{color:DK}}>{almPpal(p)}</strong></div>
           </div>
-          <span style={{fontSize:19,fontWeight:900,color:OR}}>{money(getPrecio(p,lista))}</span>
+          {esVolumen(p)?<VolBadge grande/>:<span style={{fontSize:19,fontWeight:900,color:OR}}>{money(getPrecio(p,lista))}</span>}
         </div>
       )}
 
@@ -2085,6 +2115,30 @@ function Portal(){
   }
 
   function addToCart(p){
+    if(esVolumen(p)){
+      if(!isVendedor(session)){
+        alert("Este producto se vende por volumen (precio especial por costal).\n\nNo se cotiza desde el portal: consulta condiciones con tu asesor.");
+        return;
+      }
+      // Vendedor: captura el precio pactado. SIEMPRE con IVA incluido,
+      // igual que toda la lista de precios del portal.
+      const resp=window.prompt(`${safe(p.descripcion)}\n\nPrecio PACTADO por pieza, CON IVA incluido:`);
+      if(resp===null) return; // canceló
+      const precio=safeNum(resp);
+      if(precio<=0){alert("Escribe un precio válido mayor a cero.");return;}
+      setCart(prev=>{
+        const idx=prev.findIndex(it=>it.codigo===p.codigo);
+        if(idx>=0) return prev.map((it,i)=>i===idx?{...it,cantidad:it.cantidad+1}:it);
+        return [...prev,{
+          marca:safe(p.marca),medida:safe(p.medida),
+          codigo:safe(p.codigo),descripcion:safe(p.descripcion),
+          precio,tipoPrecio:"pactado",cantidad:1,
+          _publico:precio,_distribuidor:precio,_asociado:precio,
+        }];
+      });
+      setCartOpen(true);
+      return;
+    }
     const lista=safe(session?.lista).toUpperCase();
     const vend=isVendedor(session);
     const tipoPrecio=vend?"publico":lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
@@ -2129,7 +2183,8 @@ function Portal(){
         if(rows.length===0){setMsg("❌ El archivo no trae filas de datos.");return;}
         const mapped=rows.map(r=>{
           const tlajo=safeNum(pick(r,"TLAJO"));
-          const meli =safeNum(pick(r,"MELI","CHAPALA"));
+          const meli =safeNum(pick(r,"MELI","CHAPALA","CHAP06"));
+          const chap3=safeNum(pick(r,"CHAP03","CHAPALA03"));
           const totalCol=safeNum(pick(r,"TOTAL","TOTALALMACEN","TOTAL ALMACÉN","EXISTENCIA"));
           return {
             marca:      pick(r,"MARCA"),
@@ -2139,8 +2194,8 @@ function Portal(){
             asociado:     safeNum(pick(r,"ASOCIADO")),
             distribuidor: safeNum(pick(r,"DISTRIBUIDOR")),
             publico:      safeNum(pick(r,"PVP","PUBLICO","PÚBLICO","PVP PUBLICO")),
-            tlajo, meli,
-            total: totalCol>0?totalCol:(tlajo+meli),
+            tlajo, meli, chap3,
+            total: totalCol>0?totalCol:(tlajo+meli+chap3),
             actualizado:new Date().toISOString(),
           };
         }).filter(p=>p.codigo);
@@ -2177,7 +2232,7 @@ function Portal(){
           const items=mapped.map(p=>[
             safe(p.marca), safe(p.medida), safe(p.codigo), safe(p.descripcion),
             safeNum(p[campo]),
-            topar(p.tlajo), topar(p.meli), topar(p.total),
+            topar(p.tlajo), topar(p.meli), topar(p.chap3), topar(p.total),
           ]);
           const bat=writeBatch(db);
           for(let i=0,n=0;i<items.length;i+=POR_PAQUETE,n++){
@@ -2400,7 +2455,7 @@ function Portal(){
     const controles=<>
       <div style={{flex:1,minWidth:180}}>
         <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
-        <div style={{color:"#8A8A8A",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, TOTAL</div>
+        <div style={{color:"#8A8A8A",fontSize:10,marginTop:2}}>MARCA, MEDIDA, CODIGO, DESCRIPCION, ASOCIADO, DISTRIBUIDOR, PVP, TLAJO, MELI, CHAP03, TOTAL</div>
       </div>
       <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
       <Btn onClick={()=>{setMsg("");fref.current.click();}}>SUBIR CSV</Btn>
@@ -2511,9 +2566,10 @@ function Portal(){
                   <td style={{padding:"8px 12px",fontWeight:900,fontSize:14,color:DK,whiteSpace:"nowrap"}}>{p.medida||"—"}</td>
                   <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:10,color:"#999"}}>{p.codigo}</td>
                   <td style={{padding:"8px 12px",maxWidth:280,fontSize:12,color:"#444",lineHeight:1.3}}>{p.descripcion}</td>
+                  {esVolumen(p)?<td colSpan={3} style={{padding:"8px",textAlign:"center"}}><VolBadge/></td>:<>
                   <td style={{padding:"8px",textAlign:"right",color:OR,fontWeight:800}}>{money(p.publico)}</td>
                   <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.distribuidor)}</td>
-                  <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td>
+                  <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td></>}
                   {ALMS.map(a=>{const v=safeNum(p[a]);return <td key={a} style={{padding:"8px",textAlign:"right",color:v>0?"#555":"#ddd"}}>{v>0?v:"--"}</td>;})}
                   <td style={{padding:"8px",textAlign:"right",fontWeight:800,fontSize:14,color:col}}>{tot}</td>
                   <td style={{padding:"6px 8px"}}>
@@ -2677,10 +2733,11 @@ function Portal(){
                     <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:10,color:"#999"}}>{p.codigo}</td>
                     <td style={{padding:"8px 12px",maxWidth:260,fontSize:12,color:"#444",lineHeight:1.3,fontWeight:500}}>{p.descripcion}</td>
                     {vend?<>
+                      {esVolumen(p)?<td colSpan={3} style={{padding:"8px",textAlign:"center"}}><VolBadge/></td>:<>
                       <td style={{padding:"8px",textAlign:"right",color:OR,fontWeight:800}}>{money(p.publico)}</td>
                       <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.distribuidor)}</td>
-                      <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td>
-                    </>:<td style={{padding:"8px 10px",textAlign:"right",fontWeight:800,fontSize:14,color:OR,whiteSpace:"nowrap"}}>{money(getPrecio(p,lista))}</td>}
+                      <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td></>}
+                    </>:<td style={{padding:"8px 10px",textAlign:"right",fontWeight:800,fontSize:14,color:OR,whiteSpace:"nowrap"}}>{esVolumen(p)?<VolBadge/>:money(getPrecio(p,lista))}</td>}
                     {ALMS.map((a,ai)=><td key={a} style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA",borderLeft:ai===0?"2px solid "+BD:"none"}}><StockPill v={p[a]} real={vend}/></td>)}
                     <td style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA"}}><StockPill v={tot} peso={800} real={vend}/></td>
                     <td style={{padding:"6px 8px"}}>
