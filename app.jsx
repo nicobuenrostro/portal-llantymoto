@@ -136,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v3.9.2 · rinomax en otras · 05ago2026";
+const VERSION = "v4.0.2 · sap 4 decimales · 05ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -974,7 +974,53 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,paqueteri
 }
 
 // ── Panel de cotización ───────────────────────────────────────
-function CartPanel({cart,setCart,session,onClose}){
+function CartPanel({cart,setCart,session,products,onClose}){
+  const [importOpen,setImportOpen]=useState(false);
+  const [importTxt,setImportTxt]=useState("");
+  const [importMsg,setImportMsg]=useState("");
+  // Pegar desde Excel: cada renglón "SKU  cantidad" (tab, coma o
+  // espacios). Busca el SKU en el catálogo vivo y agrega la partida
+  // con el precio ACTUAL de la lista del usuario, igual que el botón +.
+  function importarPartidas(){
+    const vend2=isVendedor(session);
+    const lista=safe(session?.lista).toUpperCase();
+    const porCodigo={};
+    (products||[]).forEach(p=>{porCodigo[safe(p.codigo).toUpperCase()]=p;});
+    let ok=0; const noEnc=[], volSalt=[];
+    const nuevos=[];
+    importTxt.split(/\r?\n/).forEach(lin=>{
+      const t=lin.trim(); if(!t)return;
+      const partes=t.split(/[\t,;]+|\s{2,}|\s+(?=\d+$)/).map(x=>x.trim()).filter(Boolean);
+      if(!partes.length)return;
+      const sku=safe(partes[0]).toUpperCase();
+      const cant=Math.max(1,safeNum(partes[1])||1);
+      const p=porCodigo[sku];
+      if(!p){noEnc.push(sku);return;}
+      if(esVolumen(p)){volSalt.push(sku);return;}
+      const tipoPrecio=vend2?"publico":lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
+      const precio=tipoPrecio==="publico"?safeNum(p.publico):tipoPrecio==="distribuidor"?safeNum(p.distribuidor):safeNum(p.asociado);
+      nuevos.push({marca:safe(p.marca),medida:safe(p.medida),codigo:safe(p.codigo),
+        descripcion:safe(p.descripcion),precio,tipoPrecio,cantidad:cant,
+        _publico:safeNum(p.publico),_distribuidor:safeNum(p.distribuidor),_asociado:safeNum(p.asociado)});
+      ok++;
+    });
+    if(nuevos.length){
+      setCart(prev=>{
+        const out=[...prev];
+        nuevos.forEach(n=>{
+          const i=out.findIndex(it=>it.codigo===n.codigo);
+          if(i>=0)out[i]={...out[i],cantidad:out[i].cantidad+n.cantidad};
+          else out.push(n);
+        });
+        return out;
+      });
+    }
+    let m=`✅ ${ok} partida(s) agregadas.`;
+    if(noEnc.length)m+=`\n❌ Sin coincidencia en el catálogo: ${noEnc.slice(0,8).join(", ")}${noEnc.length>8?"…":""}`;
+    if(volSalt.length)m+=`\n⚠ Por volumen (agrégalas manualmente con su precio pactado): ${volSalt.join(", ")}`;
+    setImportMsg(m);
+    if(ok&&!noEnc.length&&!volSalt.length){setImportOpen(false);setImportTxt("");}
+  }
   const vend=isVendedor(session);
   const [nota,setNota]=useState("");
   const [vigencia,setVigencia]=useState("7 días naturales");
@@ -1123,6 +1169,25 @@ function CartPanel({cart,setCart,session,onClose}){
               <option>Sujeto a disponibilidad</option>
             </select>
           </div>
+          {vend&&(
+            <button onClick={()=>{setImportOpen(v=>!v);setImportMsg("");}}
+              style={{width:"100%",marginBottom:10,background:"#fff",color:"#1B7A43",border:"1.5px dashed #1B7A43",padding:"9px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:800,letterSpacing:.5}}>
+              📥 IMPORTAR PARTIDAS DESDE EXCEL
+            </button>
+          )}
+          {vend&&importOpen&&(
+            <div style={{marginBottom:10,border:"1px solid "+BD,borderRadius:8,padding:10,background:"#FAFAFA"}}>
+              <div style={{color:GRL,fontSize:10,marginBottom:6}}>
+                Pega renglones desde Excel: <b>SKU</b> y <b>cantidad</b> (una partida por renglón). Toma el precio ACTUAL de tu lista.
+              </div>
+              <textarea value={importTxt} onChange={e=>setImportTxt(e.target.value)}
+                placeholder={"1107017ANLASTOUSPO\t2\n25812CUMAT54\t4"}
+                style={{width:"100%",minHeight:90,padding:"8px 10px",border:"1px solid "+BD,borderRadius:6,fontSize:12,fontFamily:"monospace",outline:"none",boxSizing:"border-box",resize:"vertical"}}/>
+              {importMsg&&<pre style={{margin:"6px 0 0",fontSize:11,whiteSpace:"pre-wrap",color:"#374151"}}>{importMsg}</pre>}
+              <button onClick={importarPartidas}
+                style={{marginTop:8,background:"#1B7A43",color:"#fff",border:"none",padding:"8px 14px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:800}}>AGREGAR AL CARRITO</button>
+            </div>
+          )}
           {vend&&(
             <div style={{marginBottom:10}}>
               <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>DESCUENTO ADICIONAL % (0–30)</div>
@@ -1591,6 +1656,41 @@ function HistorialCotizaciones({session,onReabrir}){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
+  // Tabla lista para PEGAR en la factura de SAP: SKU, descripción,
+  // cantidad y precio unitario SIN IVA con el descuento YA aplicado.
+  // Se copia al portapapeles (pegado directo en la rejilla de SAP) y
+  // además se descarga como archivo que abre Excel.
+  // Precisión: el unitario va a 4 decimales (petición de Nicolás).
+  // Con 4 el cuadre contra el total sigue siendo de centavos exactos
+  // en casos normales; solo con cantidades de miles podría desfasarse
+  // 1-2 centavos, que SAP redondea igual.
+  function excelSAP(cot){
+    const desc=clampDesc(cot.descuento);
+    const filas=(cot.items||[]).map(it=>{
+      const unitConIVA=safeNum(it.precio)*(1-desc/100);
+      const unitSinIVA=unitConIVA/(1+TASA_IVA);
+      return [safe(it.codigo)||safe(it.medida),
+              safeNum(it.cantidad),unitSinIVA.toFixed(4),safe(it.descripcion)];
+    });
+    const paq=safeNum(cot.paqueteria);
+    if(paq>0) filas.push(["PAQUETERIA",1,(paq/(1+TASA_IVA)).toFixed(4),"PAQUETERIA / ENVIO"]);
+    if(!filas.length){alert("Esta cotización no tiene partidas guardadas.");return;}
+    const enc=["SKU","CANTIDAD","PRECIO SIN IVA","DESCRIPCION"];
+    const tsv=[enc,...filas].map(f=>f.join("\t")).join("\n");
+    try{navigator.clipboard.writeText(tsv);}catch(e){}
+    // descarga .csv (Excel lo abre): BOM para acentos correctos
+    const csv="\uFEFF"+[enc,...filas].map(f=>f.map(c=>{
+      const t=String(c); return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;
+    }).join(",")).join("\r\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`Factura_${safe(cot.folio)||"cotizacion"}.csv`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);
+    alert(`Tabla para SAP lista:\n\n• Copiada al portapapeles: pega directo en la factura (Ctrl+V).\n• Descargada como Factura_${safe(cot.folio)}.csv por si la prefieres desde Excel.\n\nPrecios SIN IVA${desc>0?` con el ${desc}% de descuento ya aplicado`:""}.`);
+  }
+
   async function reimprimir(cot){
     try{
       await generarPDF({
@@ -1633,6 +1733,9 @@ function HistorialCotizaciones({session,onReabrir}){
                 </div>
               </div>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                {interno&&<button onClick={e=>{e.stopPropagation();excelSAP(cot);}}
+                  title="Copia la tabla (SKU, cantidad, precio sin IVA con descuento) para pegarla en la factura de SAP"
+                  style={{background:"#fff",color:"#1B7A43",border:"1.5px solid #1B7A43",padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>SAP</button>}
                 {onReabrir&&<button onClick={e=>{e.stopPropagation();onReabrir(cot);}}
                   title="Carga las partidas al carrito para modificarlas y generar una cotización nueva"
                   style={{background:"#fff",color:OR,border:"1.5px solid "+OR,padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:700}}>REABRIR</button>}
@@ -2617,7 +2720,7 @@ function Portal(){
   if(view==="admin") return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",color:"#1a1a1a"}}>
       {Hdr}{modal&&<ClientModal/>}
-      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} onClose={()=>setCartOpen(false)}/>}
+      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
       <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
@@ -2752,7 +2855,7 @@ function Portal(){
   const vend=isVendedor(session);
   return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",color:"#1a1a1a"}}>
-      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} onClose={()=>setCartOpen(false)}/>}
+      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} onClose={()=>setCartOpen(false)}/>}
       {CartFab}{Hdr}
 
       {/* En el teléfono este aviso viaja en la franja del header. */}
@@ -2868,4 +2971,3 @@ function Portal(){
 export default function App(){
   return <RedDeSeguridad><Portal/></RedDeSeguridad>;
 }
-
