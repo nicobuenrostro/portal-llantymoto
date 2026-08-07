@@ -136,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.0.3 · impuesto sap + vafc · 06ago2026";
+const VERSION = "v4.0.4 · fix csv excel español · 06ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1683,7 +1683,7 @@ function HistorialCotizaciones({session,onReabrir}){
     const tsv=[enc,...filas].map(f=>f.join("\t")).join("\n");
     try{navigator.clipboard.writeText(tsv);}catch(e){}
     // descarga .csv (Excel lo abre): BOM para acentos correctos
-    const csv="\uFEFF"+[enc,...filas].map(f=>f.map(c=>{
+    const csv="\uFEFF"+"sep=,\r\n"+[enc,...filas].map(f=>f.map(c=>{
       const t=String(c); return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;
     }).join(",")).join("\r\n");
     const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
