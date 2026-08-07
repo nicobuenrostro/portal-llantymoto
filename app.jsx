@@ -136,7 +136,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.0.2 · sap 4 decimales · 05ago2026";
+const VERSION = "v4.0.3 · impuesto sap + vafc · 06ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1666,16 +1666,20 @@ function HistorialCotizaciones({session,onReabrir}){
   // 1-2 centavos, que SAP redondea igual.
   function excelSAP(cot){
     const desc=clampDesc(cot.descuento);
+    // Código de impuesto de SAP: va en CADA renglón, productos y flete.
+    const IMPUESTO_SAP="IVAV16";
+    // Código de artículo del flete en SAP:
+    const SKU_PAQUETERIA="VAFC";
     const filas=(cot.items||[]).map(it=>{
       const unitConIVA=safeNum(it.precio)*(1-desc/100);
       const unitSinIVA=unitConIVA/(1+TASA_IVA);
       return [safe(it.codigo)||safe(it.medida),
-              safeNum(it.cantidad),unitSinIVA.toFixed(4),safe(it.descripcion)];
+              safeNum(it.cantidad),unitSinIVA.toFixed(4),IMPUESTO_SAP,safe(it.descripcion)];
     });
     const paq=safeNum(cot.paqueteria);
-    if(paq>0) filas.push(["PAQUETERIA",1,(paq/(1+TASA_IVA)).toFixed(4),"PAQUETERIA / ENVIO"]);
+    if(paq>0) filas.push([SKU_PAQUETERIA,1,(paq/(1+TASA_IVA)).toFixed(4),IMPUESTO_SAP,"PAQUETERIA / ENVIO"]);
     if(!filas.length){alert("Esta cotización no tiene partidas guardadas.");return;}
-    const enc=["SKU","CANTIDAD","PRECIO SIN IVA","DESCRIPCION"];
+    const enc=["SKU","CANTIDAD","PRECIO SIN IVA","IMPUESTO","DESCRIPCION"];
     const tsv=[enc,...filas].map(f=>f.join("\t")).join("\n");
     try{navigator.clipboard.writeText(tsv);}catch(e){}
     // descarga .csv (Excel lo abre): BOM para acentos correctos
