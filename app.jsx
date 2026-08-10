@@ -126,6 +126,10 @@ const ALMS_L = ["TLAJO","CHAP 06","CHAP 03"];
 //    Si algún día cambias a precios netos, pon PRECIOS_CON_IVA = false.
 const PRECIOS_CON_IVA = true;
 const TASA_IVA = 0.16;
+// Descuento por pago anticipado (solo vendedores). Se aplica EN
+// CASCADA: primero el descuento normal, y sobre ese resultado el %.
+// La paquetería queda fuera de ambos.
+const PCT_ANTICIPO = 3;
 
 // ══════════════════════════════════════════════════════════════
 
@@ -136,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.0.4 · fix csv excel español · 06ago2026";
+const VERSION = "v4.1 · pago anticipado 3% · 06ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -657,7 +661,7 @@ async function cargarLogoPDF(){
   }catch(e){ return null; }
 }
 
-async function generarPDF({folio,session,items,nota,vigencia,descuento,paqueteria,clienteNombre}){
+async function generarPDF({folio,session,items,nota,vigencia,descuento,anticipado,paqueteria,clienteNombre}){
   const sfolio   = safe(folio)||"S/F";
   const snota    = safe(nota);
   const svig     = safe(vigencia)||"7 días naturales";
@@ -812,14 +816,16 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,paqueteri
   // ── Totales + Tapatía Credit, lado a lado ──────────────────
   const bruto  = sitems.reduce((s,it)=>s+safeNum(it.precio)*safeNum(it.cantidad),0);
   const descMonto = sdesc>0?bruto*(sdesc/100):0;
-  // Paquetería: monto fijo con IVA, fuera del alcance del descuento.
+  // Pago anticipado: cascada sobre el resultado del descuento normal.
+  const antMonto  = anticipado?(bruto-descMonto)*(PCT_ANTICIPO/100):0;
+  // Paquetería: monto fijo con IVA, fuera del alcance de descuentos.
   const paqMonto  = safeNum(paqueteria);
-  const total  = bruto-descMonto+paqMonto;
+  const total  = bruto-descMonto-antMonto+paqMonto;
   const base   = PRECIOS_CON_IVA ? total/(1+TASA_IVA) : total;
   const iva    = PRECIOS_CON_IVA ? total-base : total*TASA_IVA;
   const granTotal = PRECIOS_CON_IVA ? total : total+iva;
 
-  const nRows=3+(sdesc>0?1:0)+(paqMonto>0?1:0);
+  const nRows=3+(sdesc>0?1:0)+(antMonto>0?1:0)+(paqMonto>0?1:0);
   const totH=nRows*6+11+4;                 // filas + banda TOTAL + aire
   const credH=CREDITO.activo?19+4:0;
   const contH=23;                          // tarjeta de contacto
@@ -889,6 +895,7 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,paqueteri
   };
   trow("Importe de lista (c/IVA)",money2(bruto));
   if(sdesc>0) trow(`Descuento (${sdesc}%)`,"-"+money2(descMonto),PDF.rojo,true);
+  if(antMonto>0) trow(`Pago anticipado (${PCT_ANTICIPO}%)`,"-"+money2(antMonto),[27,101,67],true);
   if(paqMonto>0) trow("Paquetería",money2(paqMonto));
   trow("Subtotal sin IVA",money2(base));
   trow("IVA (16%)",money2(iva));
@@ -1026,6 +1033,7 @@ function CartPanel({cart,setCart,session,products,onClose}){
   const [vigencia,setVigencia]=useState("7 días naturales");
   const [descuento,setDescuento]=useState("");
   const [paqueteria,setPaqueteria]=useState("");  // envío, monto fijo c/IVA
+  const [anticipado,setAnticipado]=useState(false); // 3% pago anticipado
   const [clienteNombre,setClienteNombre]=useState("");
   const [generating,setGenerating]=useState(false);
   const [folioMsg,setFolioMsg]=useState("");
@@ -1035,8 +1043,11 @@ function CartPanel({cart,setCart,session,products,onClose}){
   // El descuento aplica SOLO a productos. La paquetería es un monto
   // fijo (con IVA) que se suma después, intocado por el descuento.
   const descMonto=vend&&descPct>0?bruto*(descPct/100):0;
+  // Cascada: el 3% de anticipo se calcula sobre lo que QUEDÓ después
+  // del descuento normal, no sobre el bruto.
+  const antMonto=vend&&anticipado?(bruto-descMonto)*(PCT_ANTICIPO/100):0;
   const paqMonto=vend?safeNum(paqueteria):0;
-  const total=bruto-descMonto+paqMonto;
+  const total=bruto-descMonto-antMonto+paqMonto;
   const base=PRECIOS_CON_IVA?total/(1+TASA_IVA):total;
   const iva=PRECIOS_CON_IVA?total-base:total*TASA_IVA;
   const granTotal=PRECIOS_CON_IVA?total:total+iva;
@@ -1070,11 +1081,11 @@ function CartPanel({cart,setCart,session,products,onClose}){
       setFolioMsg(`📄 ${folio} — generando PDF...`);
       const descReal=vend?descPct:0;
       const nombreCliente=safe(clienteNombre)||"Público en general";
-      await generarPDF({folio,session,items:cart,nota,vigencia,descuento:descReal,paqueteria:paqMonto,clienteNombre:nombreCliente});
+      await generarPDF({folio,session,items:cart,nota,vigencia,descuento:descReal,anticipado:vend&&anticipado,paqueteria:paqMonto,clienteNombre:nombreCliente});
       await setDoc(doc(db,COL.cotizaciones,folio),{
         folio,uid:safe(session?.id),usuario:safe(session?.usuario),nombre:safe(session?.nombre),
         empresa:safe(session?.empresa),items:cart,
-        bruto,descuento:descReal,paqueteria:paqMonto,base,iva,total:granTotal,
+        bruto,descuento:descReal,anticipado:vend&&anticipado,paqueteria:paqMonto,base,iva,total:granTotal,
         clienteNombre:nombreCliente,nota:safe(nota),vigencia:safe(vigencia),
         fecha:new Date().toISOString(),
       });
@@ -1199,6 +1210,18 @@ function CartPanel({cart,setCart,session,products,onClose}){
             </div>
           )}
           {vend&&(
+            <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer",
+              border:"1px solid "+(anticipado?"#1B7A43":BD),background:anticipado?"#F0FDF4":"#fff",
+              borderRadius:8,padding:"9px 11px"}}>
+              <input type="checkbox" checked={anticipado} onChange={e=>setAnticipado(e.target.checked)}
+                style={{width:16,height:16,accentColor:"#1B7A43"}}/>
+              <span style={{fontSize:11,fontWeight:700,color:anticipado?"#166534":"#374151"}}>
+                DESCUENTO PAGO ANTICIPADO ({PCT_ANTICIPO}%)
+                <span style={{display:"block",fontWeight:400,fontSize:10,color:GRL}}>Se aplica en cascada, después del descuento de arriba.</span>
+              </span>
+            </label>
+          )}
+          {vend&&(
             <div style={{marginBottom:10}}>
               <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>PAQUETERÍA / ENVÍO $ (IVA incluido · sin descuento)</div>
               <input type="text" inputMode="decimal" placeholder="0" value={paqueteria}
@@ -1221,6 +1244,9 @@ function CartPanel({cart,setCart,session,products,onClose}){
             </div>}
             {vend&&descPct>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#dc2626",marginBottom:3}}>
               <span>Descuento ({descPct}%):</span><span style={{fontWeight:600}}>-{money2(descMonto)}</span>
+            </div>}
+            {antMonto>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#166534",marginBottom:3}}>
+              <span>Pago anticipado ({PCT_ANTICIPO}%):</span><span style={{fontWeight:600}}>-{money2(antMonto)}</span>
             </div>}
             {paqMonto>0&&<div style={{display:"flex",justifyContent:"space-between",color:GRL,marginBottom:3}}>
               <span>Paquetería:</span><span style={{color:"#1a1a1a",fontWeight:600}}>{money2(paqMonto)}</span>
@@ -1670,8 +1696,9 @@ function HistorialCotizaciones({session,onReabrir}){
     const IMPUESTO_SAP="IVAV16";
     // Código de artículo del flete en SAP:
     const SKU_PAQUETERIA="VAFC";
+    const factorAnticipo=cot.anticipado?(1-PCT_ANTICIPO/100):1;
     const filas=(cot.items||[]).map(it=>{
-      const unitConIVA=safeNum(it.precio)*(1-desc/100);
+      const unitConIVA=safeNum(it.precio)*(1-desc/100)*factorAnticipo;
       const unitSinIVA=unitConIVA/(1+TASA_IVA);
       return [safe(it.codigo)||safe(it.medida),
               safeNum(it.cantidad),unitSinIVA.toFixed(4),IMPUESTO_SAP,safe(it.descripcion)];
