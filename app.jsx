@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.1 · pago anticipado 3% · 06ago2026";
+const VERSION = "v4.2 · lista global + carrito vacío · 06ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -981,7 +981,17 @@ async function generarPDF({folio,session,items,nota,vigencia,descuento,anticipad
 }
 
 // ── Panel de cotización ───────────────────────────────────────
-function CartPanel({cart,setCart,session,products,onClose}){
+function CartPanel({cart,setCart,session,products,listaGlobal,setListaGlobal,onClose}){
+  // Cambio GLOBAL de lista: re-precia todo el carrito de un golpe.
+  // Las partidas con precio PACTADO conservan su precio negociado.
+  function aplicarListaGlobal(g){
+    setListaGlobal(g);
+    setCart(prev=>prev.map(it=>{
+      if(it.tipoPrecio==="pactado") return it;
+      const p=g==="publico"?safeNum(it._publico):g==="distribuidor"?safeNum(it._distribuidor):safeNum(it._asociado);
+      return {...it,tipoPrecio:g,precio:p>0?p:it.precio};
+    }));
+  }
   const [importOpen,setImportOpen]=useState(false);
   const [importTxt,setImportTxt]=useState("");
   const [importMsg,setImportMsg]=useState("");
@@ -1004,7 +1014,7 @@ function CartPanel({cart,setCart,session,products,onClose}){
       const p=porCodigo[sku];
       if(!p){noEnc.push(sku);return;}
       if(esVolumen(p)){volSalt.push(sku);return;}
-      const tipoPrecio=vend2?"publico":lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
+      const tipoPrecio=vend2?(listaGlobal||"publico"):lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
       const precio=tipoPrecio==="publico"?safeNum(p.publico):tipoPrecio==="distribuidor"?safeNum(p.distribuidor):safeNum(p.asociado);
       nuevos.push({marca:safe(p.marca),medida:safe(p.medida),codigo:safe(p.codigo),
         descripcion:safe(p.descripcion),precio,tipoPrecio,cantidad:cant,
@@ -1110,8 +1120,8 @@ function CartPanel({cart,setCart,session,products,onClose}){
         </div>
 
         <div style={{flex:1,overflowY:"auto",padding:16}}>
-          {cart.length===0&&<div style={{textAlign:"center",color:GRL,padding:40,fontSize:13}}>
-            Agrega productos con el botón <strong style={{color:OR}}>＋</strong> del catálogo.
+          {cart.length===0&&<div style={{textAlign:"center",color:GRL,padding:"26px 12px",fontSize:13}}>
+            Agrega productos con el botón <strong style={{color:OR}}>＋</strong> del catálogo{vend?<> o usa <strong style={{color:"#1B7A43"}}>IMPORTAR PARTIDAS DESDE EXCEL</strong> aquí arriba</>:null}.
           </div>}
           {cart.map((it,i)=>(
             <div key={i} style={{border:"1px solid "+BD,borderRadius:8,padding:12,marginBottom:10,background:"#fafafa"}}>
@@ -1180,6 +1190,20 @@ function CartPanel({cart,setCart,session,products,onClose}){
               <option>Sujeto a disponibilidad</option>
             </select>
           </div>
+          {vend&&(
+            <div style={{marginBottom:10}}>
+              <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>LISTA DE PRECIOS DE LA COTIZACIÓN</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["publico","PÚBLICO"],["distribuidor","DISTRIBUIDOR"],["asociado","ASOCIADO"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>aplicarListaGlobal(k)} style={{
+                    flex:1,padding:"9px 4px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:800,letterSpacing:.5,
+                    background:listaGlobal===k?OR:"#fff",color:listaGlobal===k?"#fff":GRL,
+                    border:"1.5px solid "+(listaGlobal===k?OR:BD)}}>{l}</button>
+                ))}
+              </div>
+              <div style={{color:GRL,fontSize:10,marginTop:4}}>Aplica a todas las partidas (las PACTADAS conservan su precio) y a lo que agregues después.</div>
+            </div>
+          )}
           {vend&&(
             <button onClick={()=>{setImportOpen(v=>!v);setImportMsg("");}}
               style={{width:"100%",marginBottom:10,background:"#fff",color:"#1B7A43",border:"1.5px dashed #1B7A43",padding:"9px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:800,letterSpacing:.5}}>
@@ -2217,6 +2241,9 @@ function Portal(){
   const [marca,setMarca]=useState("");
   const [page,setPage]=useState(0);
   const [cart,setCart]=useState([]);
+  // Lista de precios de TODA la cotización (vendedores). Cambiar aquí
+  // re-precia todas las partidas de golpe; las PACTADAS no se tocan.
+  const [listaGlobal,setListaGlobal]=useState("publico");
   const [cartOpen,setCartOpen]=useState(false);
   const PS=50;
   const [lu,setLu]=useState(""),[lp,setLp]=useState(""),[lerr,setLerr]=useState("");
@@ -2364,7 +2391,7 @@ function Portal(){
     }
     const lista=safe(session?.lista).toUpperCase();
     const vend=isVendedor(session);
-    const tipoPrecio=vend?"publico":lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
+    const tipoPrecio=vend?listaGlobal:lista==="DISTRIBUIDOR"?"distribuidor":lista==="ASOCIADO"?"asociado":"publico";
     const precio=tipoPrecio==="publico"?safeNum(p.publico):tipoPrecio==="distribuidor"?safeNum(p.distribuidor):safeNum(p.asociado);
     setCart(prev=>{
       const idx=prev.findIndex(it=>it.codigo===p.codigo);
@@ -2603,10 +2630,12 @@ function Portal(){
     </header>
   );
 
-  const CartFab=cart.length>0&&!cartOpen&&(
+  // El botón flotante SIEMPRE está para internos: sin él era imposible
+  // abrir una cotización vacía para importar partidas desde Excel.
+  const CartFab=(cart.length>0||esInterno(session))&&!cartOpen&&(
     <button onClick={()=>setCartOpen(true)} style={{position:"fixed",bottom:"calc(20px + env(safe-area-inset-bottom))",right:"calc(16px + env(safe-area-inset-right))",zIndex:1000,background:OR,color:"#fff",border:"none",borderRadius:50,padding:"12px 20px",cursor:"pointer",fontWeight:800,fontSize:13,boxShadow:"0 4px 16px rgba(255,92,30,.5)",display:"flex",alignItems:"center",gap:8}}>
       COTIZACIÓN
-      <span style={{background:"#fff",color:OR,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{cart.length}</span>
+      {cart.length>0&&<span style={{background:"#fff",color:OR,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{cart.length}</span>}
     </button>
   );
 
@@ -2751,7 +2780,7 @@ function Portal(){
   if(view==="admin") return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",color:"#1a1a1a"}}>
       {Hdr}{modal&&<ClientModal/>}
-      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} onClose={()=>setCartOpen(false)}/>}
+      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} listaGlobal={listaGlobal} setListaGlobal={setListaGlobal} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
       <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
@@ -2886,7 +2915,7 @@ function Portal(){
   const vend=isVendedor(session);
   return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",color:"#1a1a1a"}}>
-      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} onClose={()=>setCartOpen(false)}/>}
+      {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} listaGlobal={listaGlobal} setListaGlobal={setListaGlobal} onClose={()=>setCartOpen(false)}/>}
       {CartFab}{Hdr}
 
       {/* En el teléfono este aviso viaja en la franja del header. */}
