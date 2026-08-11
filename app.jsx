@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.3.1 · arribados ya en bodega · 11ago2026";
+const VERSION = "v4.3.2 · fix sku pendiente · 11ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -284,6 +284,10 @@ function detectTipo(s){
 }
 
 // ── ETA (próximos arribos) ────────────────────────────────────
+const skuPendiente = v => {
+  const t=safe(v).toUpperCase();
+  return !t||/PENDIENTE|^N\/?A$|^S\/?N$|^-+$|^X+$/.test(t);
+};
 function etaSort(eta){
   const s=safe(eta).toUpperCase();
   if(/PUERTO|ARRIB|LLEG/.test(s)&&!/\d{1,2}\//.test(s)) return "0000-00-00";
@@ -1868,8 +1872,9 @@ function ProximosArribos({session,mob}){
     const filtered=(!q||q.length<2)?transitos:transitos.filter(t=>matchProducto(q,{descripcion:t.producto||"",codigo:t.sku||"",medida:"",marca:""}));
     const map={};
     filtered.forEach(t=>{
-      const key=safe(t.sku)||safe(t.producto);
-      if(!map[key]) map[key]={sku:t.sku,producto:t.producto,arribos:[]};
+      const skuReal=skuPendiente(t.sku)?"":safe(t.sku);
+      const key=skuReal||safe(t.producto);
+      if(!map[key]) map[key]={sku:skuReal,producto:t.producto,arribos:[]};
       map[key].arribos.push({qty:t.qty,eta:t.eta});
     });
     const arr=Object.values(map);
@@ -1890,7 +1895,7 @@ function ProximosArribos({session,mob}){
         const rows=parseCsv(ev.target.result);
         if(rows.length===0){setMsg("❌ El archivo no trae filas de datos.");setUploading(false);return;}
         const mapped=rows.map(r=>({
-          sku:      pick(r,"SKU","CODIGO","CÓDIGO"),
+          sku:      (v=>skuPendiente(v)?"":v)(pick(r,"SKU","CODIGO","CÓDIGO")),
           producto: pick(r,"PRODUCTO","DESCRIPCION","DESCRIPCIÓN"),
           qty:      safeNum(pick(r,"QTY","CANTIDAD","PIEZAS")),
           eta:      pick(r,"ETA","FECHA","ARRIBO A PUERTO","ARRIBO"),
