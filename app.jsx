@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.3 · arribos desde tu excel · 11ago2026";
+const VERSION = "v4.3.1 · arribados ya en bodega · 11ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1990,15 +1990,23 @@ function ProximosArribos({session,mob}){
                     {safeNum(a.qty).toLocaleString("es-MX")} <span style={{fontSize:11,fontWeight:700,color:GRL}}>pzas</span>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:mob?8:12,flex:1,flexWrap:"wrap"}}>
-                    <div style={{background:arrib?"#16a34a":"#f0fdf4",border:"1px solid "+(arrib?"#16a34a":"#bbf7d0"),borderRadius:8,padding:"5px 12px",textAlign:"center"}}>
-                      <div style={{fontSize:9,fontWeight:700,letterSpacing:1,color:arrib?"rgba(255,255,255,.85)":"#16a34a"}}>⚓ PUERTO</div>
-                      <div style={{fontSize:mob?12:13,fontWeight:800,color:arrib?"#fff":"#15803d"}}>{etaPuertoDisplay(a.eta)}</div>
+                    {arrib?(
+                      <div style={{background:"#16a34a",border:"1px solid #16a34a",borderRadius:8,padding:"6px 14px",textAlign:"center"}}>
+                        <div style={{fontSize:9,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.85)"}}>✅ YA EN BODEGA</div>
+                        <div style={{fontSize:mob?12:13,fontWeight:800,color:"#fff"}}>{etaPuertoDisplay(a.eta)}</div>
+                        <div style={{fontSize:9,color:"rgba(255,255,255,.8)"}}>disponible en cuanto entre al sistema</div>
+                      </div>
+                    ):(<>
+                    <div style={{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"5px 12px",textAlign:"center"}}>
+                      <div style={{fontSize:9,fontWeight:700,letterSpacing:1,color:"#16a34a"}}>⚓ PUERTO</div>
+                      <div style={{fontSize:mob?12:13,fontWeight:800,color:"#15803d"}}>{etaPuertoDisplay(a.eta)}</div>
                     </div>
                     <span style={{color:"#cbd5e1",fontSize:mob?14:18,fontWeight:700}}>→</span>
                     <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:8,padding:"5px 12px",textAlign:"center"}}>
                       <div style={{fontSize:9,fontWeight:700,letterSpacing:1,color:"#2563eb"}}>🏭 CEDIS APROX.</div>
                       <div style={{fontSize:mob?12:13,fontWeight:800,color:"#1d4ed8"}}>{etaAlmacen(a.eta)}</div>
                     </div>
+                    </>)}
                   </div>
                 </div>
               );
