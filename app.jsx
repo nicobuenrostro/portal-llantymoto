@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.2 · lista global + carrito vacío · 06ago2026";
+const VERSION = "v4.2.1 · controles en carrito vacío · 06ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -1174,7 +1174,10 @@ function CartPanel({cart,setCart,session,products,listaGlobal,setListaGlobal,onC
             </div>
           ))}
 
-          {cart.length>0&&<div style={{borderTop:"1px solid "+BD,paddingTop:14,marginTop:4}}>
+          {/* Los controles también se muestran con el carrito VACÍO
+              para vendedores: sin esto era imposible llegar al botón
+              de IMPORTAR DESDE EXCEL o elegir la lista antes de armar. */}
+          {(cart.length>0||vend)&&<div style={{borderTop:"1px solid "+BD,paddingTop:14,marginTop:4}}>
           <div style={{marginBottom:10}}>
             <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>A QUIÉN SE COTIZA</div>
             <input value={clienteNombre} onChange={e=>setClienteNombre(e.target.value)} placeholder="Público en general"
