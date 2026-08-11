@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.2.1 · controles en carrito vacío · 06ago2026";
+const VERSION = "v4.3 · arribos desde tu excel · 11ago2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -290,7 +290,7 @@ function etaSort(eta){
   const m1=s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if(m1) return `${m1[3]}-${m1[2].padStart(2,"0")}-${m1[1].padStart(2,"0")}`;
   const meses={ENE:"01",FEB:"02",MAR:"03",ABR:"04",MAY:"05",JUN:"06",JUL:"07",AGO:"08",SEP:"09",OCT:"10",NOV:"11",DIC:"12"};
-  const m2=s.match(/(\d{1,2})\s*\/?\s*(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)/i);
+  const m2=s.match(/(\d{1,2})\s*[\/\-]?\s*(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)/i);
   if(m2) return `${new Date().getFullYear()}-${meses[m2[2].toUpperCase()]}-${m2[1].padStart(2,"0")}`;
   return "9999-99-99";
 }
@@ -298,7 +298,7 @@ function yaArribado(eta){
   const s=safe(eta).toUpperCase();
   return /PUERTO|ARRIB|LLEG/.test(s)&&!/\d{1,2}\//.test(s);
 }
-const etaPuertoDisplay = eta => yaArribado(eta)?"ARRIBADO":(safe(eta)||"—");
+const etaPuertoDisplay = eta => yaArribado(eta)?safe(eta).toUpperCase():(safe(eta)||"—");
 function etaAlmacen(eta){
   const s=safe(eta);
   const fmt=d=>d.toLocaleDateString("es-MX",{day:"2-digit",month:"2-digit",year:"numeric"});
@@ -309,7 +309,7 @@ function etaAlmacen(eta){
     if(!isNaN(d.getTime())){ d.setDate(d.getDate()+8); return fmt(d); }
   }
   const meses={ENE:0,FEB:1,MAR:2,ABR:3,MAY:4,JUN:5,JUL:6,AGO:7,SEP:8,OCT:9,NOV:10,DIC:11};
-  const m2=s.match(/(\d{1,2})\s*\/?\s*(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)/i);
+  const m2=s.match(/(\d{1,2})\s*[\/\-]?\s*(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)/i);
   if(m2){
     const d=new Date(new Date().getFullYear(),meses[m2[2].toUpperCase()],Number(m2[1]));
     if(!isNaN(d.getTime())){ d.setDate(d.getDate()+8); return fmt(d); }
@@ -1893,7 +1893,8 @@ function ProximosArribos({session,mob}){
           sku:      pick(r,"SKU","CODIGO","CÓDIGO"),
           producto: pick(r,"PRODUCTO","DESCRIPCION","DESCRIPCIÓN"),
           qty:      safeNum(pick(r,"QTY","CANTIDAD","PIEZAS")),
-          eta:      pick(r,"ETA","FECHA"),
+          eta:      pick(r,"ETA","FECHA","ARRIBO A PUERTO","ARRIBO"),
+          relacion: pick(r,"RELACION","RELACIÓN","CONTENEDOR","CONT"),
           actualizado:new Date().toISOString(),
         })).filter(p=>p.sku||p.producto);
         if(mapped.length===0){setMsg("❌ No se reconoció ninguna columna. Revisa los encabezados.");setUploading(false);return;}
@@ -1924,7 +1925,7 @@ function ProximosArribos({session,mob}){
         <div style={{flex:1,minWidth:180}}>
           <div style={{fontWeight:800,fontSize:12,marginBottom:3}}>ACTUALIZAR ARRIBOS</div>
           <div style={{color:GRL,fontSize:11}}>CSV UTF-8 con las columnas:</div>
-          <div style={{color:"#bbb",fontSize:10,marginTop:2}}>SKU, PRODUCTO, QTY, ETA — la ETA es la fecha de llegada a puerto (DD/MM/AAAA), o la palabra PUERTO si ya arribó.</div>
+          <div style={{color:"#bbb",fontSize:10,marginTop:2}}>SKU, DESCRIPCION, QTY, RELACION, ARRIBO A PUERTO — el arribo acepta fecha (DD/MM/AAAA o "26-ago") o el texto ARRIBADO … PEND ENTRADA. Guarda tu Excel de tránsitos como CSV UTF-8 y súbelo tal cual.</div>
         </div>
         <input type="file" accept=".csv,.tsv,.txt" ref={fref} onChange={handleFile} style={{display:"none"}}/>
         <Btn onClick={()=>{setMsg("");fref.current.click();}} disabled={uploading}>{uploading?"SUBIENDO...":"SUBIR CSV"}</Btn>
