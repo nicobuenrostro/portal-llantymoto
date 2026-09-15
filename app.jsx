@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.4.0 · alta asistida de clientes · 15sep2026";
+const VERSION = "v4.5.0 · precio sugerido al público · 15sep2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -198,6 +198,19 @@ const VolBadge = ({grande}) => <span title="Precio especial por volumen: consult
   background:"#FFF7ED",border:"1px solid #FDBA74",color:"#9A3412",
   fontSize:grande?11:9.5,fontWeight:800,letterSpacing:.5,whiteSpace:"nowrap"}}>POR VOLUMEN</span>;
 const stockVis = (t,real=false) => (!real && t>=TOPE_STOCK) ? "+30" : String(t);
+// Precio sugerido al público: solo se muestra cuando existe y cuando de
+// verdad está por encima de lo que paga el cliente. Si viniera igual o
+// más bajo (un catálogo viejo, o la propia lista PÚBLICO) no aporta nada
+// y enseñarlo confunde, así que se calla.
+const sugeridoVis = (p,lista) => {
+  const sug = safeNum(p?.sugerido), mio = getPrecio(p,lista);
+  return (sug>0 && mio>0 && sug>mio) ? sug : 0;
+};
+// Cuánto le queda al cliente por pieza si la vende al precio sugerido.
+const margenVis = (p,lista) => {
+  const sug = sugeridoVis(p,lista);
+  return sug ? sug-getPrecio(p,lista) : 0;
+};
 // Píldora de existencia por almacén. Antes TLAJO y CHAPALA salían en
 // el mismo gris plano y no se distinguía nada de un vistazo; ahora
 // cada celda dice sola si hay, hay poco o no hay.
@@ -343,14 +356,26 @@ async function fbGetCatalogoCliente(lista){
       if(!Array.isArray(paquete)) paquete=[];
       paquete.forEach((it,i)=>{
         if(!Array.isArray(it)) return;
-        // Formato nuevo: 9 posiciones (con CHAP 03). Formato viejo: 8.
-        // El total siempre es la última posición, así ambos conviven.
-        const [marca,medida,codigo,descripcion,precio,tlajo,meli]=it;
-        const chap3=it.length>=9?it[7]:0;
-        const total=it[it.length-1];
-        // Las tres listas apuntan al mismo número: el cliente solo tiene la suya.
+        // Tres formatos conviven, y se distinguen por el LARGO del renglón:
+        //    8 → [marca,medida,codigo,desc,precio,tlajo,meli,total]        (original)
+        //    9 → ...igual pero con CHAP 03 antes del total
+        //   10 → [marca,medida,codigo,desc,precio,SUGERIDO,tlajo,meli,chap3,total]
+        // El sugerido se metió en el 5º lugar y no al final, para que el
+        // total siga siendo siempre la última posición y los catálogos
+        // viejos se sigan leyendo sin migrar nada.
+        const [marca,medida,codigo,descripcion,precio]=it;
+        const conSugerido = it.length>=10;
+        const sugerido = conSugerido ? safeNum(it[5]) : 0;
+        const base = conSugerido ? 6 : 5;              // dónde arrancan los almacenes
+        const tlajo = it[base], meli = it[base+1];
+        const chap3 = it.length>=9 ? it[base+2] : 0;
+        const total = it[it.length-1];
+        // Las tres listas apuntan al mismo número: el cliente solo tiene la
+        // suya. `sugerido` viaja aparte y es el PVP, para que pueda ver
+        // cuánto puede ganarle sin enterarse de las otras listas.
         out.push({id:`${d.id}_${i}`,marca,medida,codigo,descripcion,
           asociado:safeNum(precio),distribuidor:safeNum(precio),publico:safeNum(precio),
+          sugerido,
           tlajo:safeNum(tlajo),meli:safeNum(meli),chap3:safeNum(chap3),total:safeNum(total)});
       });
     });
@@ -2288,12 +2313,27 @@ function CardProducto({p,vend,lista,onAdd}){
           ))}
         </div>
       ):(
-        <div style={{background:BG,borderTop:"1px solid "+BD,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div>
-            <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.6}}>TU PRECIO ({safe(lista)||"PÚBLICO"})</div>
-            <div style={{fontSize:10,color:GRL,marginTop:2}}>Almacén ppal: <strong style={{color:DK}}>{almPpal(p)}</strong></div>
+        <div style={{background:BG,borderTop:"1px solid "+BD,padding:"10px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:9,color:GRL,fontWeight:700,letterSpacing:.6}}>TU PRECIO ({safe(lista)||"PÚBLICO"})</div>
+              <div style={{fontSize:10,color:GRL,marginTop:2}}>Almacén ppal: <strong style={{color:DK}}>{almPpal(p)}</strong></div>
+            </div>
+            {esVolumen(p)?<VolBadge grande/>:<span style={{fontSize:19,fontWeight:900,color:OR}}>{money(getPrecio(p,lista))}</span>}
           </div>
-          {esVolumen(p)?<VolBadge grande/>:<span style={{fontSize:19,fontWeight:900,color:OR}}>{money(getPrecio(p,lista))}</span>}
+          {/* Precio sugerido al público: lo que el cliente le cobra a SU
+              cliente. Va debajo y en chico para que no le compita al precio
+              propio, pero es el dato que le dice cuánto puede ganarle. */}
+          {!esVolumen(p)&&sugeridoVis(p,lista)>0&&(
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              marginTop:8,paddingTop:8,borderTop:"1px dashed "+BD}}>
+              <span style={{fontSize:10,color:GRL,fontWeight:600}}>Sugerido al público</span>
+              <span style={{fontSize:12,color:"#555",fontWeight:700}}>
+                {money(sugeridoVis(p,lista))}
+                <span style={{color:VERDE,fontWeight:800,marginLeft:8}}>+{money(margenVis(p,lista))}</span>
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -2648,9 +2688,14 @@ function Portal(){
           if(previo.docs.length>0){
             const del=writeBatch(db);previo.docs.forEach(d=>del.delete(d.ref));await del.commit();
           }
+          // El 6º elemento es el PRECIO SUGERIDO AL PÚBLICO, y va en TODOS
+          // los catálogos: el asociado y el distribuidor necesitan saber en
+          // cuánto se vende al mostrador para calcular su ganancia. Es un
+          // precio público por definición, así que no revela nada.
           const items=mapped.map(p=>[
             safe(p.marca), safe(p.medida), safe(p.codigo), safe(p.descripcion),
             safeNum(p[campo]),
+            safeNum(p.publico),
             topar(p.tlajo), topar(p.meli), topar(p.chap3), topar(p.total),
           ]);
           const bat=writeBatch(db);
@@ -3182,7 +3227,13 @@ function Portal(){
                   {["MARCA","MEDIDA","SKU","DESCRIPCIÓN"].map(h=><th key={h} style={{padding:"10px 12px",textAlign:"left",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>{h}</th>)}
                   {vend
                     ? ["PÚBLICO","DIST.","ASOCIADO"].map(h=><th key={h} style={{padding:"10px 8px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>{h}<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.55)"}}>IVA incl.</div></th>)
-                    : <th style={{padding:"10px 10px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>PRECIO<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.55)"}}>IVA incl.</div></th>}
+                    : <>
+                      <th style={{padding:"10px 10px",textAlign:"right",color:"#fff",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>TU PRECIO<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.55)"}}>IVA incl.</div></th>
+                      {/* El PVP le sirve al cliente para saber en cuánto
+                          revender y cuánto le queda. Es precio público, no
+                          revela ninguna de las otras listas. */}
+                      <th style={{padding:"10px 10px",textAlign:"right",color:"rgba(255,255,255,.8)",fontWeight:700,fontSize:10,letterSpacing:.8,whiteSpace:"nowrap"}}>SUGERIDO<div style={{fontSize:8,fontWeight:400,letterSpacing:0,color:"rgba(255,255,255,.5)"}}>al público</div></th>
+                    </>}
                   {/* Los almacenes van en su propia zona sombreada, con
                       borde a la izquierda: precios y existencia dejan de
                       leerse como una sola sopa de números. */}
@@ -3202,7 +3253,15 @@ function Portal(){
                       <td style={{padding:"8px",textAlign:"right",color:OR,fontWeight:800}}>{money(p.publico)}</td>
                       <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.distribuidor)}</td>
                       <td style={{padding:"8px",textAlign:"right",fontWeight:600}}>{money(p.asociado)}</td></>}
-                    </>:<td style={{padding:"8px 10px",textAlign:"right",fontWeight:800,fontSize:14,color:OR,whiteSpace:"nowrap"}}>{esVolumen(p)?<VolBadge/>:money(getPrecio(p,lista))}</td>}
+                    </>:<>
+                      <td style={{padding:"8px 10px",textAlign:"right",fontWeight:800,fontSize:14,color:OR,whiteSpace:"nowrap"}}>{esVolumen(p)?<VolBadge/>:money(getPrecio(p,lista))}</td>
+                      <td style={{padding:"8px 10px",textAlign:"right",whiteSpace:"nowrap"}}>
+                        {sugeridoVis(p,lista)>0?<>
+                          <span style={{fontWeight:600,color:"#555"}}>{money(sugeridoVis(p,lista))}</span>
+                          <span style={{display:"block",fontSize:10,fontWeight:800,color:VERDE}}>+{money(margenVis(p,lista))}</span>
+                        </>:<span style={{color:"#D5D5D5"}}>—</span>}
+                      </td>
+                    </>}
                     {ALMS.map((a,ai)=><td key={a} style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA",borderLeft:ai===0?"2px solid "+BD:"none"}}><StockPill v={p[a]} real={vend}/></td>)}
                     <td style={{padding:"8px",textAlign:"center",background:i%2?"#F4F4F4":"#FAFAFA"}}><StockPill v={tot} peso={800} real={vend}/></td>
                     <td style={{padding:"6px 8px"}}>
