@@ -140,7 +140,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.3.2 · fix sku pendiente · 11ago2026";
+const VERSION = "v4.4.0 · alta asistida de clientes · 15sep2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -408,6 +408,85 @@ function mensajeAuth(e){
   if(/network-request-failed/.test(c)) return "Sin conexión. Revisa tu internet.";
   if(/requires-recent-login/.test(c)) return "Por seguridad, vuelve a entrar antes de cambiarla.";
   return safe(e?.message)||"Error inesperado";
+}
+
+// ── Alta asistida de cuentas ──────────────────────────────────
+// Dar de alta un cliente eran seis campos a mano y un mensaje redactado
+// desde cero cada vez. Aquí se genera usuario y contraseña con una
+// convención fija, y el instructivo se arma con los datos REALES de la
+// cuenta recién creada: así nunca sale un mensaje con el usuario de otro.
+
+// Palabras sin letras que se confundan al dictar por teléfono: fuera la
+// i, la ele, la o y el cero, que suenan y se ven igual entre sí.
+const PALABRAS_PASS = ["moto","ruta","curva","freno","casco","rueda",
+                       "pista","taller","camba","turbo","marcha","puerta"];
+
+// Contraseña temporal: palabra + tres dígitos. Dictable, y por arriba
+// del mínimo que exige Firebase (MIN_PASS = 6).
+function generarPassword(){
+  const p = PALABRAS_PASS[Math.floor(Math.random()*PALABRAS_PASS.length)];
+  const n = 100 + Math.floor(Math.random()*900);
+  return `${p}${n}`;
+}
+
+// Usuario a partir de la empresa (o del nombre si no hay empresa).
+// Se limpia EXACTAMENTE igual que emailDe, para que lo que ve el admin
+// sea idéntico a lo que Firebase va a guardar: si aquí se mostrara algo
+// distinto, el cliente tecleaería una cosa y el sistema esperaría otra.
+// `existentes` evita choques agregando 2, 3, 4...
+function sugerirUsuario(empresa, nombre, existentes = []){
+  const base = sinAcentos(safe(empresa) || safe(nombre))
+    .toLowerCase().trim()
+    .replace(/\b(sa de cv|s a de c v|srl|sc|the|los|las|el|la|de|del|y)\b/g,"")
+    .replace(/[^a-z0-9]/g,"")
+    .slice(0,18);
+  if(!base) return "";
+  const usados = new Set((existentes||[]).map(u=>safe(u.usuario).toLowerCase()));
+  if(!usados.has(base)) return base;
+  for(let i=2;i<100;i++){ if(!usados.has(base+i)) return base+i; }
+  return base + Date.now().toString().slice(-3);
+}
+
+function mensajeBienvenida({nombre, usuario, password, asesor}){
+  return `Hola ${safe(nombre)} 👋
+
+Ya quedó lista tu cuenta en nuestro portal de precios *${EMPRESA.web}*. Ahí puedes consultar disponibilidad, ver tus precios y armar tus cotizaciones en PDF cuando lo necesites, sin esperar a nadie.
+
+*Entra aquí:* https://${EMPRESA.web}
+
+Usuario: *${safe(usuario)}*
+Contraseña: *${safe(password)}*
+
+⚠️ Esta contraseña es temporal. Al entrar, cámbiala en tu perfil.
+
+*Cómo funciona:*
+1. Buscas la medida o la marca
+2. Agregas lo que te interese con el botón +
+3. Descargas tu cotización en PDF
+4. Me escribes para confirmar existencia y cerrar el pedido
+
+Los precios que ves ahí ya son los tuyos, con IVA incluido. El inventario se actualiza a diario.
+
+Cualquier duda me marcas o me escribes por aquí. Bienvenido 🙌
+
+${safe(asesor)} — Tu asesor
+${EMPRESA.nombre}`;
+}
+
+// El método moderno del portapapeles solo existe en HTTPS, y en algunos
+// navegadores viejos de Android no está: por eso queda el respaldo.
+async function copiarTexto(texto){
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(texto); return true;
+    }
+    const ta=document.createElement("textarea");
+    ta.value=texto; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    const ok=document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){ console.error("copiarTexto:",e); return false; }
 }
 
 // ── Permisos ──────────────────────────────────────────────────
@@ -2034,6 +2113,76 @@ function PassCell(){
   </span>;
 }
 
+// ── Entrega de credenciales ───────────────────────────────────
+// Sale UNA sola vez, justo al crear la cuenta, porque ese es el único
+// momento en que la contraseña existe en claro: Firebase la cifra y
+// después ni el administrador puede consultarla. Además arma el mensaje
+// de bienvenida con los datos reales de ESTA cuenta, para que nunca se
+// mande un instructivo con el usuario de otro cliente.
+function EntregaModal({entrega,onClose}){
+  const [copiado,setCopiado]=useState("");
+  if(!entrega) return null;
+  // A un vendedor no se le manda el instructivo de "busca tu medida y
+  // descarga tu PDF": es gente de la casa, solo necesita sus accesos.
+  const esDelEquipo = safe(entrega.lista)==="VENDEDOR";
+  const msg = esDelEquipo ? "" : mensajeBienvenida(entrega);
+  const Fila = ({etiqueta, valor}) => (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+      padding:"9px 12px",background:"#fafafa",border:"1px solid "+BD,borderRadius:6,marginBottom:8}}>
+      <span style={{color:GRL,fontSize:10,letterSpacing:2}}>{etiqueta}</span>
+      <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700}}>{valor}</span>
+    </div>
+  );
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",
+    alignItems:"center",justifyContent:"center",zIndex:1100,padding:16}}>
+    <div style={{background:CD,borderRadius:10,padding:24,width:"100%",maxWidth:460,
+      boxShadow:"0 8px 40px rgba(0,0,0,.2)",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{fontWeight:800,fontSize:14,color:OR,marginBottom:6}}>CUENTA CREADA</div>
+      <div style={{fontSize:13,marginBottom:16}}>
+        {safe(entrega.nombre)}{entrega.empresa?` · ${safe(entrega.empresa)}`:""} · lista {safe(entrega.lista)}
+      </div>
+
+      <Fila etiqueta="USUARIO"    valor={safe(entrega.usuario)}/>
+      <Fila etiqueta="CONTRASEÑA" valor={safe(entrega.password)}/>
+
+      <div style={{background:"#FFF4E5",border:"1px solid #FFD9A8",borderRadius:6,
+        padding:"10px 12px",fontSize:12,margin:"4px 0 16px",lineHeight:1.5}}>
+        <b>Esta contraseña no se puede volver a consultar.</b> Firebase la guarda
+        cifrada. Si se pierde, hay que restablecerla desde la consola. Envíala ahora.
+      </div>
+
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {!esDelEquipo&&<Btn onClick={async()=>{
+          const ok=await copiarTexto(msg);
+          setCopiado(ok?"✅ Mensaje copiado. Pégalo en WhatsApp o en el correo."
+                       :"❌ No se pudo copiar. Selecciona el texto de abajo a mano.");
+        }}>COPIAR MENSAJE DE BIENVENIDA</Btn>}
+
+        <Btn ghost onClick={async()=>{
+          const ok=await copiarTexto(`Usuario: ${safe(entrega.usuario)}\nContraseña: ${safe(entrega.password)}`);
+          setCopiado(ok?"✅ Usuario y contraseña copiados.":"❌ No se pudo copiar.");
+        }}>COPIAR SÓLO LOS DATOS</Btn>
+      </div>
+
+      {copiado&&<div style={{fontSize:12,marginTop:10,textAlign:"center"}}>{copiado}</div>}
+
+      {/* Vista previa: hay que poder leer lo que se va a mandar antes de
+          mandarlo, y sirve de respaldo si el portapapeles falla. */}
+      {!esDelEquipo&&<details style={{marginTop:14}}>
+        <summary style={{cursor:"pointer",fontSize:11,color:GRL,letterSpacing:1}}>VER MENSAJE</summary>
+        <textarea readOnly value={msg} onFocus={e=>e.target.select()}
+          style={{width:"100%",height:230,marginTop:8,padding:10,fontSize:12,
+            fontFamily:"inherit",border:"1px solid "+BD,borderRadius:6,
+            boxSizing:"border-box",lineHeight:1.5}}/>
+      </details>}
+
+      <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
+        <Btn ghost onClick={onClose}>LISTO</Btn>
+      </div>
+    </div>
+  </div>;
+}
+
 // ── Cambiar mi contraseña ─────────────────────────────────────
 function ChangePassword(){
   const [actual,setActual]=useState(""),[nueva,setNueva]=useState(""),[conf,setConf]=useState("");
@@ -2272,6 +2421,9 @@ function Portal(){
   const fref=useRef();const timer=useRef(null);
   const hdrRef=useRef(null);const [hdrH,setHdrH]=useState(0);
   const emptyC={nombre:"",empresa:"",usuario:"",password:"",lista:"DISTRIBUIDOR",estatus:"activo"};
+  // Credenciales recién creadas, en espera de ser entregadas. Vive aquí
+  // y no en el modal de alta porque ese modal se desmonta al guardar.
+  const [entrega,setEntrega]=useState(null);
 
   useEffect(()=>{const h=()=>setMob(window.innerWidth<768);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
   // Alto real del header, para que el buscador se pegue justo debajo.
@@ -2539,7 +2691,21 @@ function Portal(){
       const verify=await getDoc(doc(db,COL.usuarios,id));
       if(!verify.exists()){alert("No se guardó. Intenta de nuevo.");setSaving(false);return;}
       await setDoc(doc(db,COL.bitacora,`u_${Date.now()}`),{tipo:form.id?"edicion_usuario":"nuevo_usuario",usuario:safe(form.usuario),por:safe(session?.nombre),fecha:new Date().toISOString()});
-      await loadUsers();setModal(null);
+      await loadUsers();
+      // En un alta nueva, la contraseña solo existe en este instante:
+      // Firebase la cifra y después nadie puede volver a consultarla.
+      // Por eso se pasa a la pantalla de entrega en vez de cerrar y perderla.
+      if(!form.id){
+        setEntrega({
+          nombre:   safe(form.nombre),
+          empresa:  safe(form.empresa),
+          usuario:  safe(form.usuario),
+          password: safe(form.password),
+          lista:    safe(form.lista),
+          asesor:   safe(session?.nombre),
+        });
+      }
+      setModal(null);
     }catch(err){alert("Error: "+mensajeAuth(err));}
     setSaving(false);
   }
@@ -2576,8 +2742,38 @@ function Portal(){
               solo estorba, así que el campo únicamente existe para
               clientes y en vendedores se llena solo al guardar. */}
           {!esVend&&<Inp label="EMPRESA" value={form.empresa||""} onChange={e=>upd("empresa",e.target.value)}/>}
-          <Inp label="USUARIO *" value={form.usuario} onChange={e=>upd("usuario",e.target.value)}/>
-          <Inp label={isEdit?"NUEVA CONTRASEÑA (vacío = no cambia)":"CONTRASEÑA *"} value={form.password} onChange={e=>upd("password",e.target.value)} type="password"/>
+          <div style={{marginBottom:12}}>
+            <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>USUARIO *</div>
+            <div style={{display:"flex",gap:6}}>
+              <input value={form.usuario} onChange={e=>upd("usuario",e.target.value)}
+                style={{flex:1,padding:"10px 12px",background:"#fafafa",border:"1px solid "+BD,
+                  fontSize:13,borderRadius:6,outline:"none",minWidth:0}}/>
+              {!isEdit&&<button type="button"
+                onClick={()=>{
+                  upd("usuario", sugerirUsuario(form.empresa, form.nombre, users));
+                  upd("password", generarPassword());
+                }}
+                title="Genera usuario y contraseña a partir de la empresa"
+                style={{background:OR,color:"#fff",border:"none",padding:"0 14px",borderRadius:6,
+                  cursor:"pointer",fontWeight:800,fontSize:11,letterSpacing:1,whiteSpace:"nowrap"}}>
+                GENERAR
+              </button>}
+            </div>
+          </div>
+
+          {/* Al dar de alta, la contraseña se muestra en claro a propósito:
+              hay que poder leerla para dictarla, y solo se ve esta vez.
+              Al editar se oculta, porque ahí es un dato que se reemplaza. */}
+          <div style={{marginBottom:12}}>
+            <div style={{color:GRL,fontSize:10,letterSpacing:2,marginBottom:4}}>
+              {isEdit?"NUEVA CONTRASEÑA (vacío = no cambia)":"CONTRASEÑA *"}
+            </div>
+            <input value={form.password} onChange={e=>upd("password",e.target.value)}
+              type={isEdit?"password":"text"}
+              style={{width:"100%",padding:"10px 12px",background:"#fafafa",border:"1px solid "+BD,
+                fontSize:13,borderRadius:6,outline:"none",boxSizing:"border-box",
+                fontFamily:isEdit?"inherit":"monospace"}}/>
+          </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:mob?"1fr":"1fr 1fr",gap:"0 14px"}}>
           <div style={{marginBottom:12}}>
@@ -2796,7 +2992,7 @@ function Portal(){
   // ── ADMIN ───────────────────────────────────────────────────
   if(view==="admin") return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:"Arial,sans-serif",color:"#1a1a1a"}}>
-      {Hdr}{modal&&<ClientModal/>}
+      {Hdr}{modal&&<ClientModal/>}{entrega&&<EntregaModal entrega={entrega} onClose={()=>setEntrega(null)}/>}
       {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} listaGlobal={listaGlobal} setListaGlobal={setListaGlobal} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
       <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
