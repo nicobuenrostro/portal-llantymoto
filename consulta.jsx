@@ -18,7 +18,7 @@
 //     coincidencia exacta o solo dimensional se avisa.
 //   · No se inventan años, versiones ni la medida del otro eje.
 //   · Fuentes, mercados, advertencias y fichas sin año siguen visibles.
-//   · El convertidor es independiente: se abre en otra pestaña con la medida.
+//   · Convertidor de medidas: pendiente, aún no se incorpora.
 //
 // El motor (consulta-engine.js) no toca el DOM; este archivo solo pinta.
 // El catálogo se descarga y descomprime UNA vez por sesión (caché de módulo)
@@ -32,7 +32,11 @@ import E from "./consulta-engine.js";
 // de despliegue si algún día lo hubiera.
 const BASE_URL = ((import.meta.env&&import.meta.env.BASE_URL)||"/").replace(/\/?$/,"/");
 const CATALOG_URL     = BASE_URL+"consulta/catalog.gz";
-const CONVERTIDOR_URL = BASE_URL+"consulta/Convertidor_LlantyMoto.html";
+// Convertidor de medidas: PENDIENTE (aún no terminado). Cuando esté listo,
+// descomentar CONVERTIDOR_URL y abrirConvertidor, y volver a poner los
+// botones "CONVERTIDOR DE MEDIDAS" (encabezado) y "Comparar delantera/trasera"
+// (bloque de evidencia).
+// const CONVERTIDOR_URL = BASE_URL+"consulta/Convertidor_LlantyMoto.html";
 
 // ── Paleta (misma que app.jsx) ────────────────────────────────
 const OR="#FF5C1E", GRL="#818181", CD="#ffffff", BD="#EBEBEB", DK="#1A1A1A";
@@ -42,8 +46,6 @@ const DEFAULTS={q:"",category:"Moto",mode:"auto",brand:"",model:"",year:"",versi
 const PAGE=12;
 const YEAR_RE=/\b(?:19|20)\d{2}\b/;
 const EJEMPLOS=[["Italika FT150","Moto"],["Yamaha MT-07","Moto"],["Honda TRX","Offroad"],["Polaris RZR","Offroad"],["120/70-17","Moto"]];
-// Campos del bloque excel que ya se muestran en otra parte de la ficha.
-const EXCEL_OCULTOS=["Marca","Tipo","Año modelo","Versión","Línea","Llanta delantera","Llanta trasera","ID de registro","URL de ficha / fuente","URL de índice / catálogo","Fuentes complementarias","Observaciones","Verificación"];
 
 // ── Carga del catálogo (una sola vez por sesión) ──────────────
 let catalogPromise=null;
@@ -77,10 +79,10 @@ const urlSegura=v=>{try{const u=new URL(v);return u.protocol==="https:"?u.href:"
 const enCategoria=(d,category)=>!category||(category==="Offroad"&&["ATV","UTV"].includes(d.vehicle))||d.vehicle===category;
 const fmt=n=>Number(n||0).toLocaleString("es-MX");
 
-function abrirConvertidor(size="",category="Moto"){
-  const u=CONVERTIDOR_URL+"?a="+encodeURIComponent(size)+"&category="+encodeURIComponent(category);
-  window.open(u,"_blank","noopener");
-}
+// function abrirConvertidor(size="",category="Moto"){
+//   const u=CONVERTIDOR_URL+"?a="+encodeURIComponent(size)+"&category="+encodeURIComponent(category);
+//   window.open(u,"_blank","noopener");
+// }
 
 function textoCopia(g){
   const d=g.d;
@@ -95,20 +97,6 @@ async function copiar(texto){
       document.body.append(ta);ta.select();const ok=document.execCommand("copy");ta.remove();return ok;
     }catch{return false;}
   }
-}
-
-// Filas de especificaciones (rin, ancho nominal, perfil, campos excel).
-function especificaciones(d){
-  const out=[];
-  for(const ax of ["fd","rd"]){
-    const t=ax==="fd"?d._front:d._rear, label=ax==="fd"?"Delantera":"Trasera";
-    if(t) out.push([label+" · rin",t.rim+" pulgadas"],[label+" · designación",d[ax]]);
-    if(t?.kind==="metric") out.push([label+" · ancho nominal",`${t.parts[0]} mm / ${t.parts[0]/10} cm / ${(t.parts[0]/25.4).toFixed(2)}″`],[label+" · perfil",t.parts[1]+" % del ancho"]);
-    if(t?.kind==="flotation") out.push([label+" · diámetro nominal",`${t.parts[0]}″ / ${(t.parts[0]*25.4).toFixed(1)} mm / ${(t.parts[0]*2.54).toFixed(2)} cm`],[label+" · ancho nominal",`${t.parts[1]}″ / ${(t.parts[1]*25.4).toFixed(1)} mm`]);
-  }
-  for(const [k,v] of Object.entries(d.excel||{}))
-    if(v!==null&&v!==""&&!EXCEL_OCULTOS.includes(k)&&!k.startsWith("URL")) out.push([k,String(v)]);
-  return out;
 }
 
 // Sugerencias ortográficas: solo palabras del vocabulario real de marcas y
@@ -323,12 +311,6 @@ export default function ConsultaLlantas({mob=false}){
     return [...new Set(grupos.slice(0,8).map(g=>g.d.m+" "+g.d.n+(y?" "+y:"")))];
   },[resultado,grupos,estadoConsulta.q]);
 
-  const cobertura=useMemo(()=>{
-    if(!db) return "";
-    const n=db.rows.length,moto=db.rows.filter(d=>d.vehicle==="Moto").length,atv=db.rows.filter(d=>d.vehicle==="ATV").length,utv=db.rows.filter(d=>d.vehicle==="UTV").length,sin=db.rows.filter(d=>!d.year).length;
-    return `${fmt(n)} fichas: ${fmt(moto)} Moto, ${atv} ATV y ${utv} UTV. ${sin} sin año identificado. No es un catálogo de inventario: consulta existencias en CATÁLOGO.`;
-  },[db]);
-
   function toggleEvidencia(key){ setAbiertas(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);return n;}); }
 
   // ── Render ──────────────────────────────────────────────────
@@ -355,7 +337,6 @@ export default function ConsultaLlantas({mob=false}){
           <h2 style={{margin:"4px 0 0",fontSize:mob?22:28,lineHeight:1.15,letterSpacing:"-.02em"}}>¿Qué llanta lleva?</h2>
           <p style={{margin:"4px 0 0",color:GRL,fontSize:13}}>Escribe el vehículo o la medida. Delantera y trasera en un solo resultado.</p>
         </div>
-        <button className="cl-btn" type="button" onClick={()=>abrirConvertidor("",state.category)}>CONVERTIDOR DE MEDIDAS ↗</button>
       </div>
 
       {/* ── Búsqueda ── */}
@@ -491,7 +472,6 @@ export default function ConsultaLlantas({mob=false}){
       </div>
       {activa&&restantes>0&&<button type="button" className="cl-btn cl-more" onClick={()=>setLimit(l=>l+PAGE)}>Ver {Math.min(PAGE,restantes)} más ({restantes} restantes)</button>}
 
-      <p className="cl-cov">{cobertura} Una similitud geométrica no autoriza montaje ni acredita carga, velocidad o compatibilidad.</p>
       {toast&&<div className="cl-toast" role="status">{toast}</div>}
     </div>
   );
@@ -510,7 +490,6 @@ function Ficha({g,state,abierta,onToggle,onCopiar}){
     (d._multiple&&(!d.year||(!state.year&&!YEAR_RE.test(state.q))))?"Este modelo registra medidas diferentes. Confirma el año y la versión de tu vehículo.":"",
   ].filter(Boolean);
   const years=E.yearsLabel(g.years);
-  const categoria=d.vehicle==="Moto"?"Moto":"Offroad";
 
   return(
     <article className="cl-card cl-result">
@@ -540,7 +519,7 @@ function Ficha({g,state,abierta,onToggle,onCopiar}){
         <button type="button" className="cl-btn" aria-expanded={abierta} onClick={onToggle}>{abierta?"Ocultar detalles":"Ver años, detalles y fuentes"}</button>
         <button type="button" className="cl-btn" onClick={onCopiar}>Copiar medidas</button>
       </div>
-      {abierta&&<Evidencia g={g} categoria={categoria}/>}
+      {abierta&&<Evidencia g={g}/>}
     </article>
   );
 }
@@ -556,8 +535,7 @@ function Llanta({d,ax,hit}){
   );
 }
 
-function Evidencia({g,categoria}){
-  const d=g.d;
+function Evidencia({g}){
   const porAnio=useMemo(()=>{
     const u=new Map();
     for(const r of g.records){const k=r.year||"unknown";if(!u.has(k))u.set(k,[]);u.get(k).push(r);}
@@ -565,10 +543,6 @@ function Evidencia({g,categoria}){
   },[g]);
   return(
     <div className="cl-evidence">
-      <div className="cl-actions" style={{marginTop:0}}>
-        {d.fd&&<button type="button" className="cl-btn" onClick={()=>abrirConvertidor(d.fd,categoria)}>Comparar delantera ↗</button>}
-        {d.rd&&<button type="button" className="cl-btn" onClick={()=>abrirConvertidor(d.rd,categoria)}>Comparar trasera ↗</button>}
-      </div>
       <p style={{color:GRL,fontSize:12}}>Solo se agrupan años documentados con las mismas medidas. No se infieren años intermedios ni una generación del fabricante.</p>
       {porAnio.map(ds=>(
         <details key={ds[0].year||"unknown"}>
@@ -594,8 +568,6 @@ function Fuente({d}){
           </li>;
         }):<li>Sin fuente enlazada. Requiere confirmación.</li>}
       </ul>
-      <dl>{especificaciones(d).map(([k,v],i)=><FilaDl key={i} k={k} v={v}/>)}</dl>
     </div>
   );
 }
-const FilaDl=({k,v})=><><dt>{k}</dt><dd>{v}</dd></>;
