@@ -11,6 +11,11 @@ import {
 } from "firebase/auth";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+// Sección CONSULTA DE LLANTAS (buscador de medidas por vehículo / medida).
+// Archivo consulta.jsx en la raíz del repo, junto a este. Por ahora solo
+// vendedores e interno; para abrirla a clientes quita "vend&&" en la vista
+// de cliente (TabBar y render).
+import ConsultaLlantas from "./consulta.jsx";
 
 // ══════════════════════════════════════════════════════════════
 // CONFIGURACIÓN — EDITA ESTA SECCIÓN ANTES DE PUBLICAR
@@ -140,7 +145,7 @@ const auth = getAuth(firebaseApp);
 const MIN_PASS = 6;
 // Sello de compilación. Aparece en el login y en el pie del panel.
 // Sirve para saber, sin adivinar, qué versión está publicada.
-const VERSION = "v4.5.0 · precio sugerido al público · 15sep2026";
+const VERSION = "v4.6.0 · consulta de llantas · 21sep2026";
 
 // ── Paleta ────────────────────────────────────────────────────
 const OR  = "#FF5C1E";   // naranja LlantyMoto
@@ -3040,7 +3045,7 @@ function Portal(){
       {Hdr}{modal&&<ClientModal/>}{entrega&&<EntregaModal entrega={entrega} onClose={()=>setEntrega(null)}/>}
       {cartOpen&&<CartPanel cart={cart} setCart={setCart} session={session} products={products} listaGlobal={listaGlobal} setListaGlobal={setListaGlobal} onClose={()=>setCartOpen(false)}/>}
       {CartFab}
-      <TabBar items={[["products","CATÁLOGO"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
+      <TabBar items={[["products","CATÁLOGO"],["consulta","CONSULTA DE LLANTAS"],["vendedores","VENDEDORES"],["clients","CLIENTES"],["quotes","COTIZACIONES"],["arribos","ARRIBOS"],["optimizador","OPTIMIZADOR"],["settings","CONFIGURACIÓN"]]}/>
       <div style={{padding:mob?12:24,maxWidth:1400,margin:"0 auto"}}>
 
         {tab==="products"&&<div>
@@ -3116,6 +3121,8 @@ function Portal(){
           </div>
         </div>}
 
+        {tab==="consulta"&&<ConsultaLlantas mob={mob}/>}
+
         {tab==="clients"&&<div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:8,flexWrap:"wrap"}}>
             <div>
@@ -3181,7 +3188,7 @@ function Portal(){
         <span style={{color:"#fff",fontSize:13,fontWeight:700}}>CONTADO ANTICIPADO: <span style={{color:"#FFE0C0"}}>3% DE DESCUENTO ADICIONAL</span></span>
       </div>}
 
-      <TabBar items={[["products","CATÁLOGO"],["quotes",vend?"COTIZACIONES":"MIS COTIZACIONES"],...(vend?[["arribos","PRÓXIMOS ARRIBOS"],["optimizador","OPTIMIZADOR"]]:[]),
+      <TabBar items={[["products","CATÁLOGO"],...(vend?[["consulta","CONSULTA DE LLANTAS"]]:[]),["quotes",vend?"COTIZACIONES":"MIS COTIZACIONES"],...(vend?[["arribos","PRÓXIMOS ARRIBOS"],["optimizador","OPTIMIZADOR"]]:[]),
         ...(puedeCatalogo(session)?[["subir","SUBIR CATÁLOGO"]]:[])]}/>
 
       <div style={{padding:mob?12:20,maxWidth:1400,margin:"0 auto"}}>
@@ -3277,6 +3284,7 @@ function Portal(){
           {filtered.length>0&&<Pager total={filtered.length} pg={page} setPg={setPage} ps={PS} mob={mob}/>}
         </>}
 
+        {tab==="consulta"&&vend&&<ConsultaLlantas mob={mob}/>}
         {tab==="quotes"&&<HistorialCotizaciones session={session} onReabrir={reabrirCotizacion}/>}
         {tab==="arribos"&&vend&&<ProximosArribos session={session} mob={mob}/>}
 
